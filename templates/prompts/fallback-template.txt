@@ -1,0 +1,11 @@
+Default SOC2 Analysis Template:
+
+Input: {base}
+
+Please analyze this according to SOC2 requirements. Consider:
+- Relevant Common Criteria (CC) controls
+- Authentication and authorization context
+- Security implications
+- Compliance gaps
+
+Remember: Always ground your response in specific SOC2 controls and avoid speculation.

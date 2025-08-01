@@ -1,0 +1,80 @@
+config:
+  target: 'http://localhost:3000'
+  phases:
+    - duration: 60
+      arrivalRate: 5
+      name: "Warm up"
+    - duration: 120
+      arrivalRate: 10
+      name: "Ramp up"
+    - duration: 60
+      arrivalRate: 20
+      name: "Peak load"
+  payload:
+    path: "./test-data.json"
+    fields:
+      - "target"
+      - "description"
+  processor: "./processor.js"
+
+scenarios:
+  - name: "Basic Workflow - No Auth"
+    weight: 60
+    flow:
+      - post:
+          url: "/api/run-soc2-workflow"
+          json:
+            target: "{{ target }}"
+            scope: "security"
+            description: "{{ description }}"
+            template: "security-quick"
+          capture:
+            json: "$.workflowId"
+            as: "workflowId"
+      - think: 2
+      - get:
+          url: "/api/workflows/{{ workflowId }}/status"
+      - think: 5
+      - get:
+          url: "/api/workflows/{{ workflowId }}/results"
+
+  - name: "Auth Required Workflow"
+    weight: 30
+    flow:
+      - post:
+          url: "/api/run-soc2-workflow"
+          json:
+            target: "https://example.com"
+            scope: "comprehensive"
+            description: "test SQL injection post-login"
+            template: "security-comprehensive"
+            auth:
+              username: "testuser"
+              password: "testpass"
+          capture:
+            json: "$.workflowId"
+            as: "workflowId"
+      - think: 2
+      - get:
+          url: "/api/workflows/{{ workflowId }}/status"
+
+  - name: "HITL Approval Flow"
+    weight: 10
+    flow:
+      - post:
+          url: "/api/run-soc2-workflow"
+          json:
+            target: "https://critical-app.com"
+            scope: "comprehensive"
+            description: "test critical vulnerabilities"
+            template: "security-comprehensive"
+          capture:
+            json: "$.workflowId"
+            as: "workflowId"
+          expect:
+            - statusCode: 202
+      - think: 1
+      - post:
+          url: "/api/workflows/{{ workflowId }}/approve"
+          json:
+            approved: true 

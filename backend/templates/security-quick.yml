@@ -1,0 +1,78 @@
+# Security Quick Scan Methodology Template
+# For rapid security assessment focusing on critical vulnerabilities
+
+name: Security Quick Scan
+description: Quick security assessment focusing on critical OWASP vulnerabilities
+duration: 60 # minutes
+progressive: false
+
+# Trust Service Categories covered
+tsc:
+  - Security
+
+# Common Criteria focus areas (minimal)
+cc_coverage:
+  primary:
+    - CC6.1  # Logical Access
+    - CC6.6  # Boundary Protection
+    - CC7.2  # Security Monitoring
+
+# Attack selection criteria
+attack_selection:
+  include_categories:
+    - OWASP_TOP_10
+  min_severity: high
+  require_auth_available: false
+  max_attacks: 10
+  
+# Execution phases
+phases:
+  - name: Quick Discovery
+    duration: 15
+    attacks:
+      - port-scanning
+      - security-misconfig
+    parallel: true
+    
+  - name: Critical Vulnerabilities
+    duration: 30
+    attacks:
+      - sql-injection
+      - broken-access-control
+      - auth-failures
+      - crypto-failures
+    parallel: true
+    require_auth: false
+    progressive: false
+    
+  - name: Basic Web Security
+    duration: 15
+    attacks:
+      - xss
+      - vulnerable-components
+    parallel: true
+    require_auth: false
+
+# Evidence collection requirements
+evidence:
+  required:
+    - vulnerability_summary
+    - critical_findings
+  format:
+    - json
+    - pdf
+  retention_days: 90
+
+# Risk thresholds
+risk_thresholds:
+  abort_on_critical: true  # Stop if critical found
+  max_high_findings: 3     # Alert if more than 3 high
+  require_approval_for_critical: false
+
+# Reporting
+reporting:
+  include_cc_mapping: false
+  include_remediation: true
+  executive_summary: true
+  technical_details: false
+  compliance_matrix: false

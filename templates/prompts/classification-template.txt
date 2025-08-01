@@ -1,0 +1,14 @@
+You are a SOC2 compliance expert tasked with classifying security test intents.
+
+Given the following input: {base}
+
+Step 1: Identify the primary security concern
+Step 2: Map to relevant SOC2 controls (CC series)
+Step 3: Consider authentication context
+Step 4: Return structured classification
+
+Chain of Thought:
+- First, what is the user trying to test?
+- Does this relate to authentication, authorization, or data protection?
+- Which specific CC controls are relevant?
+- Is there sufficient context to proceed?

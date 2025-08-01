@@ -1,0 +1,42 @@
+[
+  {
+    "target": "https://example1.com",
+    "description": "Test basic security scan"
+  },
+  {
+    "target": "https://example2.com",
+    "description": "Check for common vulnerabilities"
+  },
+  {
+    "target": "https://api.example3.com",
+    "description": "API security assessment"
+  },
+  {
+    "target": "https://webapp.example4.com",
+    "description": "Web application security test"
+  },
+  {
+    "target": "https://portal.example5.com",
+    "description": "Portal authentication testing"
+  },
+  {
+    "target": "https://secure.example6.com",
+    "description": "SSL/TLS configuration check"
+  },
+  {
+    "target": "https://admin.example7.com",
+    "description": "Admin panel security review"
+  },
+  {
+    "target": "https://mobile-api.example8.com",
+    "description": "Mobile API security scan"
+  },
+  {
+    "target": "https://legacy.example9.com",
+    "description": "Legacy system vulnerability assessment"
+  },
+  {
+    "target": "https://cloud.example10.com",
+    "description": "Cloud infrastructure security check"
+  }
+] 

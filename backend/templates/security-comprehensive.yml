@@ -1,0 +1,113 @@
+# Security Comprehensive Methodology Template
+# For full SOC 2 Security assessment with all CC controls
+
+name: Security Comprehensive
+description: Complete security assessment covering all OWASP Top 10 and SOC 2 Security controls
+duration: 240 # minutes
+progressive: true
+
+# Trust Service Categories covered
+tsc:
+  - Security
+
+# Common Criteria focus areas
+cc_coverage:
+  primary:
+    - CC5.1  # Control Activities
+    - CC5.2  # Technology Controls
+    - CC6.1  # Logical Access
+    - CC6.2  # User Registration
+    - CC6.3  # Role-Based Access
+    - CC6.4  # Access Reviews
+    - CC6.6  # Boundary Protection
+    - CC7.1  # Configuration Management
+    - CC7.2  # Security Monitoring
+  secondary:
+    - CC3.2  # Risk Assessment
+    - CC4.1  # Control Evaluation
+    - CC8.1  # Change Management
+
+# Attack selection criteria
+attack_selection:
+  include_categories:
+    - OWASP_TOP_10
+    - CUSTOM
+  min_severity: low
+  require_auth_available: true
+  
+# Execution phases
+phases:
+  - name: Reconnaissance
+    duration: 30
+    attacks:
+      - port-scanning
+      - security-misconfig
+    parallel: true
+    
+  - name: Vulnerability Discovery
+    duration: 60
+    attacks:
+      - vulnerable-components
+      - crypto-failures
+      - cors-misconfig
+    parallel: true
+    require_auth: false
+    
+  - name: Access Control Testing
+    duration: 60
+    attacks:
+      - auth-failures
+      - broken-access-control
+      - parameter-tampering
+    parallel: false
+    require_auth: true
+    progressive: true
+    
+  - name: Injection Testing
+    duration: 60
+    attacks:
+      - sql-injection
+      - blind-sql-injection
+      - xpath-injection
+      - xss
+      - ssrf
+    parallel: true
+    require_auth: true
+    progressive: true
+    
+  - name: Integrity Testing
+    duration: 30
+    attacks:
+      - csrf
+      - integrity-failures
+      - clickjacking
+    parallel: true
+    require_auth: true
+
+# Evidence collection requirements
+evidence:
+  required:
+    - vulnerability_reports
+    - configuration_screenshots
+    - access_logs
+    - injection_payloads
+    - exploitation_proofs
+  format:
+    - json
+    - pdf
+    - png
+  retention_days: 365
+
+# Risk thresholds
+risk_thresholds:
+  abort_on_critical: false  # Continue even if critical found
+  max_high_findings: 10     # Alert if more than 10 high
+  require_approval_for_critical: true
+
+# Reporting
+reporting:
+  include_cc_mapping: true
+  include_remediation: true
+  executive_summary: true
+  technical_details: true
+  compliance_matrix: true

@@ -1,0 +1,44 @@
+# docker/security-policies/apparmor-profile.toml
+# AppArmor profile for Kali container restrictions
+# This is a TOML representation, will need to be converted to AppArmor format
+
+[profile]
+name = "docker-kali-restricted"
+flags = ["attach_disconnected", "mediate_deleted"]
+
+[capabilities]
+deny = ["mac_admin", "mac_override", "sys_module"]
+
+[filesystem]
+# Read access to common paths
+allow_read = [
+  "/bin/**",
+  "/usr/bin/**",
+  "/lib/**",
+  "/usr/lib/**",
+  "/etc/ld.so.cache",
+  "/proc/sys/kernel/ngroups_max"
+]
+
+# Write access only to specific directories
+allow_write = [
+  "/tmp/**",
+  "/app/**",
+  "/tmp/results/**"
+]
+
+# Deny write to sensitive locations
+deny_write = [
+  "/etc/**",
+  "/sys/**",
+  "/proc/**",
+  "/boot/**"
+]
+
+[network]
+# Allow network access for testing
+allow = ["inet", "inet6"]
+
+[signals]
+# Allow receiving signals
+allow_receive = true

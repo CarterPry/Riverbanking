@@ -1,0 +1,36 @@
+# monitoring/jaeger/jaeger-config.yaml
+span-storage-type: memory
+
+collector:
+  port: 14268
+  zipkin:
+    http-port: 9411
+  queue-size: 2000
+  num-workers: 50
+
+query:
+  static-files: /go/jaeger-ui/build/
+  base-path: /
+  port: 16686
+
+processor:
+  jaeger-compact:
+    server-host-port: 0.0.0.0:6831
+  jaeger-binary:
+    server-host-port: 0.0.0.0:6832
+
+# Memory storage configuration (for development)
+# In production, use Cassandra, Elasticsearch, or other backends
+memory:
+  max-traces: 100000
+
+# Sampling configuration
+sampling:
+  strategies-file: /etc/jaeger/sampling_strategies.json
+
+# Metrics configuration
+metrics-backend: prometheus
+metrics-http-route: /metrics
+
+# Log level
+log-level: info

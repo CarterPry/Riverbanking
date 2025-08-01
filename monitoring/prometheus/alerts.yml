@@ -1,0 +1,124 @@
+# monitoring/prometheus/alerts.yml
+groups:
+  - name: soc2_compliance_alerts
+    interval: 30s
+    rules:
+      # High anomaly detection
+      - alert: HighAnomalyScore
+        expr: anomaly_score > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          component: compliance
+        annotations:
+          summary: "High anomaly score detected"
+          description: "Anomaly score {{ $value }} exceeds threshold of 0.5 for {{ $labels.instance }}"
+
+      # Restraint failures
+      - alert: RestraintFailure
+        expr: rate(restraint_failures_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: restraint
+        annotations:
+          summary: "Restraint failure detected"
+          description: "{{ $value }} restraint failures in the last 5 minutes on {{ $labels.instance }}"
+
+      # Authentication required but not provided
+      - alert: AuthenticationTimeout
+        expr: auth_required_pending > 0
+        for: 10m
+        labels:
+          severity: warning
+          component: auth
+        annotations:
+          summary: "Authentication required but not provided"
+          description: "Workflow waiting for authentication for more than 10 minutes"
+
+      # HITL approval pending
+      - alert: HITLApprovalPending
+        expr: hitl_approval_pending > 0
+        for: 30m
+        labels:
+          severity: info
+          component: hitl
+        annotations:
+          summary: "HITL approval pending"
+          description: "Workflow waiting for human approval for more than 30 minutes"
+
+      # High error rate
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: error
+          component: api
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value }} (> 5%) for {{ $labels.instance }}"
+
+      # AI service latency
+      - alert: AIServiceHighLatency
+        expr: histogram_quantile(0.95, rate(ai_request_duration_seconds_bucket[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+          component: ai
+        annotations:
+          summary: "AI service high latency"
+          description: "95th percentile latency is {{ $value }}s (> 5s) for {{ $labels.service }}"
+
+      # Database connection issues
+      - alert: DatabaseConnectionFailure
+        expr: up{job="postgres"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "Database connection failure"
+          description: "Cannot connect to PostgreSQL database"
+
+      # Queue backlog
+      - alert: QueueBacklogHigh
+        expr: queue_pending_jobs > 100
+        for: 10m
+        labels:
+          severity: warning
+          component: queue
+        annotations:
+          summary: "High queue backlog"
+          description: "{{ $value }} jobs pending in queue for more than 10 minutes"
+
+      # Compliance control failures
+      - alert: ComplianceControlFailure
+        expr: rate(compliance_control_failures_total[1h]) > 5
+        for: 1m
+        labels:
+          severity: error
+          component: compliance
+        annotations:
+          summary: "Multiple compliance control failures"
+          description: "{{ $value }} control failures in the last hour for control {{ $labels.control }}"
+
+      # Resource usage alerts
+      - alert: HighMemoryUsage
+        expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is above 90% on {{ $labels.instance }}"
+
+      - alert: HighCPUUsage
+        expr: 100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is above 80% on {{ $labels.instance }}"

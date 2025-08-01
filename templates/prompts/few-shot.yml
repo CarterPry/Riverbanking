@@ -1,0 +1,3 @@
+examples:
+  - input: 'test auth post-login'
+    output: {matched: ['Identification Failures']}

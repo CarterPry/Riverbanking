@@ -1,0 +1,13 @@
+# docker/networks/isolated-test.yml
+version: '3.8'
+networks:
+  isolated-test:
+    driver: bridge
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "false"
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+          gateway: 172.20.0.1
