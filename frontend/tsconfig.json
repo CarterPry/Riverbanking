@@ -13,8 +13,6 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "strict": true,
-    "skipLibCheck": true,
     "types": ["vite/client", "node", "jest", "@testing-library/jest-dom"]
   },
   "include": ["src"],

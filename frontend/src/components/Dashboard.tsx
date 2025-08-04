@@ -72,13 +72,15 @@ function Dashboard({ workflowId }: { workflowId?: string }) {
     console.log('Dashboard useEffect triggered', { workflowId, time: new Date().toISOString() });
     if (!workflowId) return;
 
-    // Close existing connection if any
-    if (wsRef.current) {
-      console.log('Closing existing WebSocket connection');
-      wsRef.current.close();
-    }
+    // Add a small delay to prevent rapid reconnections during re-renders
+    const connectionTimeout = setTimeout(() => {
+      // Close existing connection if any
+      if (wsRef.current) {
+        console.log('Closing existing WebSocket connection');
+        wsRef.current.close();
+      }
 
-    wsRef.current = connect(
+      wsRef.current = connect(
       `ws://localhost:3000/ws?workflowId=${workflowId}`,
       (msg: WebSocketMessage) => {
         // Handle different message types
@@ -220,9 +222,11 @@ function Dashboard({ workflowId }: { workflowId?: string }) {
         setTimeout(() => setWsError(null), 3000);
       }
     );
+    }, 200); // 200ms delay to debounce rapid re-renders
 
     return () => {
-      console.log('Dashboard useEffect cleanup - closing WebSocket', { workflowId, time: new Date().toISOString() });
+      console.log('Dashboard useEffect cleanup - clearing timeout and closing WebSocket', { workflowId, time: new Date().toISOString() });
+      clearTimeout(connectionTimeout);
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
