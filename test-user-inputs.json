@@ -1,0 +1,198 @@
+{
+  "test_scenarios": [
+    {
+      "scenario": "Basic Public Website Security Scan",
+      "description": "Quick security scan of a public-facing website",
+      "input": {
+        "target": "https://sweetspot.so",
+        "scope": "/*",
+        "description": "Basic security assessment of main website - authorized testing target",
+        "testType": "quick",
+        "username": "",
+        "password": ""
+      },
+      "expected_behavior": "Should run quick scan without authentication"
+    },
+    {
+      "scenario": "Comprehensive API Security Test",
+      "description": "Full security test of API endpoints with authentication",
+      "input": {
+        "target": "https://api.sweetspot.so",
+        "scope": "/api/*, /v1/*, /v2/*",
+        "description": "Comprehensive security assessment of sweetspot.so API endpoints - authorized testing",
+        "testType": "comprehensive",
+        "username": "testuser@sweetspot.so",
+        "password": "SecureTestPass123!"
+      },
+      "expected_behavior": "Should run comprehensive scan with authenticated access to API endpoints"
+    },
+    {
+      "scenario": "Admin Portal Security Assessment",
+      "description": "Security test focusing on admin functionality",
+      "input": {
+        "target": "https://admin.example.com",
+        "scope": "/admin/*, /dashboard/*",
+        "description": "Security assessment of administrative interfaces and privileged functions",
+        "testType": "comprehensive",
+        "username": "admin@example.com",
+        "password": "AdminTestPass456!"
+      },
+      "expected_behavior": "Should test admin-specific vulnerabilities and access controls"
+    },
+    {
+      "scenario": "Mobile API Security Test",
+      "description": "Quick scan of mobile application backend",
+      "input": {
+        "target": "https://mobile-api.example.com",
+        "scope": "/v1/*, /auth/*",
+        "description": "Security scan of mobile API endpoints focusing on authentication and data exposure",
+        "testType": "quick",
+        "username": "mobile_user",
+        "password": "MobilePass789"
+      },
+      "expected_behavior": "Should quickly scan mobile API for common vulnerabilities"
+    },
+    {
+      "scenario": "E-commerce Platform Test",
+      "description": "Comprehensive test of e-commerce functionality",
+      "input": {
+        "target": "https://shop.example.com",
+        "scope": "/products/*, /checkout/*, /user/*, /api/*",
+        "description": "Full security assessment of e-commerce platform including payment flows and user data handling",
+        "testType": "comprehensive",
+        "username": "shopper@example.com",
+        "password": "ShopperTest321"
+      },
+      "expected_behavior": "Should test payment security, session management, and data protection"
+    },
+    {
+      "scenario": "Internal Application Test",
+      "description": "Security test of internal corporate application",
+      "input": {
+        "target": "https://intranet.company.local",
+        "scope": "/hr/*, /finance/*, /reports/*",
+        "description": "Security assessment of internal corporate systems with focus on data access controls",
+        "testType": "comprehensive",
+        "username": "employee@company.local",
+        "password": "CorpPass2024!"
+      },
+      "expected_behavior": "Should test internal access controls and data segregation"
+    },
+    {
+      "scenario": "SaaS Multi-tenant Application",
+      "description": "Test multi-tenant isolation and security",
+      "input": {
+        "target": "https://app.saas-platform.com",
+        "scope": "/tenant/*, /api/*, /shared/*",
+        "description": "Security test focusing on tenant isolation, data segregation, and cross-tenant vulnerabilities",
+        "testType": "comprehensive",
+        "username": "tenant1_user@example.com",
+        "password": "TenantPass123"
+      },
+      "expected_behavior": "Should verify tenant isolation and test for cross-tenant data leakage"
+    },
+    {
+      "scenario": "Healthcare Portal Compliance Test",
+      "description": "Security and compliance test for healthcare application",
+      "input": {
+        "target": "https://portal.healthcare.com",
+        "scope": "/patient/*, /provider/*, /records/*",
+        "description": "HIPAA-focused security assessment of patient portal and medical records system",
+        "testType": "comprehensive",
+        "username": "provider@healthcare.com",
+        "password": "HealthSecure456"
+      },
+      "expected_behavior": "Should test for PHI exposure and compliance-related vulnerabilities"
+    },
+    {
+      "scenario": "Development Environment Quick Scan",
+      "description": "Quick security check of development/staging environment",
+      "input": {
+        "target": "https://dev.example.com",
+        "scope": "/*",
+        "description": "Quick security scan of development environment to identify exposed debug endpoints",
+        "testType": "quick",
+        "username": "",
+        "password": ""
+      },
+      "expected_behavior": "Should identify development-specific vulnerabilities and misconfigurations"
+    },
+    {
+      "scenario": "Microservices Architecture Test",
+      "description": "Test distributed microservices security",
+      "input": {
+        "target": "https://gateway.microservices.com",
+        "scope": "/auth-service/*, /user-service/*, /order-service/*, /payment-service/*",
+        "description": "Security assessment of microservices architecture including service-to-service communication",
+        "testType": "comprehensive",
+        "username": "service_account",
+        "password": "ServiceKey789"
+      },
+      "expected_behavior": "Should test API gateway security and inter-service communication"
+    }
+  ],
+  "edge_cases": [
+    {
+      "scenario": "Invalid URL Format",
+      "input": {
+        "target": "not-a-valid-url",
+        "scope": "/*",
+        "description": "Test with invalid URL",
+        "testType": "quick"
+      },
+      "expected_behavior": "Should return validation error"
+    },
+    {
+      "scenario": "IP Address Target",
+      "input": {
+        "target": "192.168.1.100",
+        "scope": "/*",
+        "description": "Test using IP address instead of domain",
+        "testType": "quick"
+      },
+      "expected_behavior": "Should handle IP addresses correctly"
+    },
+    {
+      "scenario": "Empty Authentication",
+      "input": {
+        "target": "https://secure.example.com",
+        "scope": "/secure/*",
+        "description": "Test secure endpoints without credentials",
+        "testType": "comprehensive",
+        "username": "",
+        "password": ""
+      },
+      "expected_behavior": "Should test as unauthenticated user"
+    },
+    {
+      "scenario": "Special Characters in Scope",
+      "input": {
+        "target": "https://example.com",
+        "scope": "/api/v1/users/*/orders?status=*, /search?q=*",
+        "description": "Test with query parameters and wildcards in scope",
+        "testType": "quick"
+      },
+      "expected_behavior": "Should correctly parse complex scope patterns"
+    }
+  ],
+  "performance_test_batch": [
+    {
+      "target": "https://loadtest1.example.com",
+      "scope": "/api/*",
+      "description": "Load test target 1",
+      "testType": "quick"
+    },
+    {
+      "target": "https://loadtest2.example.com",
+      "scope": "/api/*",
+      "description": "Load test target 2",
+      "testType": "quick"
+    },
+    {
+      "target": "https://loadtest3.example.com",
+      "scope": "/api/*",
+      "description": "Load test target 3",
+      "testType": "quick"
+    }
+  ]
+}

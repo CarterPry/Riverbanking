@@ -1,27 +1,22 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { ThemeProvider, createTheme } from '@mui/material/styles';
-import CssBaseline from '@mui/material/CssBaseline';
 import App from './App';
 
-// Create MUI theme
-const theme = createTheme({
-  palette: {
-    mode: 'light',
-    primary: {
-      main: '#1976d2',
-    },
-    secondary: {
-      main: '#dc004e',
-    },
-  },
-});
+// Add error boundary and console log for debugging
+console.log('Main.tsx is loading...');
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <ThemeProvider theme={theme}>
-      <CssBaseline />
+const root = document.getElementById('root');
+if (!root) {
+  console.error('Root element not found!');
+} else {
+  console.log('Root element found, rendering app...');
+  try {
+    ReactDOM.createRoot(root).render(
       <App />
-    </ThemeProvider>
-  </React.StrictMode>
-); 
+    );
+    console.log('App rendered successfully!');
+  } catch (error) {
+    console.error('Error rendering app:', error);
+    root.innerHTML = '<h1>Error loading app. Check console for details.</h1>';
+  }
+} 

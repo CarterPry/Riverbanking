@@ -23,22 +23,7 @@ const PORT = process.env.API_PORT || 3000;
 
 // Middleware
 app.use(cors({
-  origin: (origin, callback) => {
-    const allowedOrigins = [
-      'http://localhost:3001',
-      'http://localhost:3002',
-      'http://localhost:5173' // Vite default port
-    ];
-    
-    // Allow requests with no origin (like mobile apps or Postman)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.includes(origin) || origin.includes('localhost')) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
+  origin: process.env.FRONTEND_URL || 'http://localhost:3001',
   credentials: true
 }));
 app.use(express.json({ limit: '10mb' }));
@@ -62,12 +47,6 @@ app.use((req, res, next) => {
   
   next();
 });
-
-// Check Docker availability before initializing services
-if (!process.env.DOCKER_HOST && process.env.NODE_ENV !== 'production') {
-  process.env.MOCK_DOCKER = 'true';
-  logger.warn('Docker not available, using mock mode');
-}
 
 // Initialize workflow controller
 const workflowController = new WorkflowController();
@@ -114,85 +93,116 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 const server = createServer(app);
 
 // Create WebSocket server for real-time updates
-const wss = new WebSocketServer({ server, path: '/ws' });
+const wss = new WebSocketServer({ 
+  server, 
+  path: '/ws',
+  perMessageDeflate: true,
+  clientTracking: true
+});
 
 // Track WebSocket clients by workflow
 const wsClients = new Map<string, Set<any>>();
 
+// Add error handling for WebSocket server
+wss.on('error', (error) => {
+  logger.error('WebSocket server error', { error });
+});
+
+// WebSocket server handles upgrades automatically when attached to HTTP server
+
 wss.on('connection', (ws, req) => {
   logger.info('WebSocket client connected', { 
     url: req.url,
-    headers: req.headers
+    headers: req.headers 
   });
   
-  let workflowId: string | null = null;
+  // Declare pingInterval at the top to avoid reference errors
+  let pingInterval: NodeJS.Timeout;
   
-  // Add ping/pong to keep connection alive
-  const pingInterval = setInterval(() => {
-    if (ws.readyState === 1) {
-      ws.ping();
+  // Extract workflowId from URL if provided
+  const urlParams = new URLSearchParams(req.url?.split('?')[1] || '');
+  let workflowId: string | null = urlParams.get('workflowId');
+  
+  // Auto-subscribe if workflowId is in URL
+  if (workflowId) {
+    const wfId = workflowId as string;
+    if (!wsClients.has(wfId)) {
+      wsClients.set(wfId, new Set());
     }
-  }, 30000); // Ping every 30 seconds
-  
-  // Parse workflowId from URL query parameters
-  if (req.url) {
+    wsClients.get(wfId)!.add(ws);
+    
+    logger.info('Auto-subscribed to workflow', { workflowId });
+    
+    // Send initial connection message
     try {
-      const url = new URL(req.url, `http://localhost:${PORT}`);
-      const urlWorkflowId = url.searchParams.get('workflowId');
-      if (urlWorkflowId) {
-        workflowId = urlWorkflowId;
-        
-        // Auto-subscribe based on URL parameter
-        if (!wsClients.has(workflowId)) {
-          wsClients.set(workflowId, new Set());
-        }
-        wsClients.get(workflowId)!.add(ws);
-        
-        logger.info('WebSocket client auto-subscribed', { workflowId });
-        
-        // Send messages after a small delay to ensure connection is stable
-        setTimeout(() => {
-          if (ws.readyState === 1) { // WebSocket.OPEN
-            try {
-              // Send initial status message
-              ws.send(JSON.stringify({ 
-                type: 'status', 
-                workflowId,
-                data: {
-                  message: 'Connected to SOC2 Testing Platform',
-                  status: 'connected'
-                },
-                timestamp: new Date().toISOString()
-              }));
-            } catch (err) {
-              logger.error('Error sending initial messages', { error: err });
-            }
-          }
-        }, 100); // 100ms delay
-      } else {
-        // No workflowId in URL, just send status message
-        setTimeout(() => {
-          if (ws.readyState === 1) { // WebSocket.OPEN
-            try {
-              ws.send(JSON.stringify({ 
-                type: 'status', 
-                data: {
-                  message: 'Connected to SOC2 Testing Platform',
-                  status: 'connected'
-                },
-                timestamp: new Date().toISOString()
-              }));
-            } catch (err) {
-              logger.error('Error sending connection message', { error: err });
-            }
-          }
-        }, 100);
-      }
+      ws.send(JSON.stringify({ 
+        type: 'connected', 
+        message: 'Connected to SOC2 Testing Platform',
+        workflowId,
+        timestamp: new Date().toISOString()
+      }));
+      logger.info('Sent connected message', { workflowId });
     } catch (error) {
-      logger.error('Error parsing WebSocket URL', { error, url: req.url });
+      logger.error('Failed to send connected message', { error, workflowId });
+    }
+    
+    // Check if workflow exists
+    const workflow = workflowController.getWorkflow(workflowId);
+    if (workflow) {
+      logger.info('Workflow found', { workflowId, status: workflow.status });
+      
+      // Send status update
+      try {
+        const statusMessage = {
+          type: 'workflow-status',
+          workflowId,
+          status: workflow.status,
+          message: `Workflow is ${workflow.status}`,
+          timestamp: new Date().toISOString(),
+          // Include results if workflow is completed
+          ...(workflow.status === 'completed' && workflow.results ? { result: workflow.results } : {})
+        };
+        
+        const messageStr = JSON.stringify(statusMessage);
+        logger.info('Sending workflow status message', { 
+          workflowId, 
+          messageSize: messageStr.length,
+          status: workflow.status 
+        });
+        
+        ws.send(messageStr);
+        logger.info('Sent workflow status', { workflowId, status: workflow.status });
+        
+        // If the workflow is completed, do NOT close the connection
+        // Let the client decide when to close
+        if (workflow.status === 'completed') {
+          logger.info('Workflow is completed, keeping connection open', { workflowId });
+        }
+      } catch (error) {
+        logger.error('Failed to send workflow status', { error, workflowId });
+      }
+    } else {
+      logger.warn('Workflow not found', { workflowId });
+      
+      // Send workflow not found status instead of disconnecting
+      try {
+        const notFoundMessage = {
+          type: 'workflow-status',
+          workflowId,
+          status: 'not-found',
+          message: 'Workflow not found. It may have expired or been cleared.',
+          timestamp: new Date().toISOString()
+        };
+        
+        ws.send(JSON.stringify(notFoundMessage));
+        logger.info('Sent workflow not found status', { workflowId });
+      } catch (error) {
+        logger.error('Failed to send not found status', { error, workflowId });
+      }
     }
   }
   
+  // Set up event handlers for ALL connections (not just those with workflowId)
   ws.on('message', (message) => {
     try {
       const data = JSON.parse(message.toString());
@@ -207,14 +217,25 @@ wss.on('connection', (ws, req) => {
         wsClients.get(wfId)!.add(ws);
         
         ws.send(JSON.stringify({ 
-          type: 'status', 
+          type: 'subscribed', 
           workflowId,
-          data: {
-            message: `Subscribed to workflow ${workflowId}`,
-            status: 'subscribed'
-          },
-          timestamp: new Date().toISOString()
+          message: `Subscribed to workflow ${workflowId}` 
         }));
+        
+        // Check if workflow is already completed and send its status
+        const workflow = workflowController.getWorkflow(workflowId);
+        if (workflow && workflow.status === 'completed') {
+          ws.send(JSON.stringify({
+            type: 'workflow-update',
+            workflowId,
+            update: {
+              event: 'workflow:completed',
+              status: 'completed',
+              result: workflow.results
+            },
+            timestamp: new Date().toISOString()
+          }));
+        }
       }
     } catch (error) {
       logger.error('WebSocket message error', { error });
@@ -223,8 +244,6 @@ wss.on('connection', (ws, req) => {
   
   ws.on('close', () => {
     logger.info('WebSocket client disconnected');
-    
-    // Clear ping interval
     clearInterval(pingInterval);
     
     // Remove from all workflow subscriptions
@@ -242,6 +261,30 @@ wss.on('connection', (ws, req) => {
   ws.on('error', (error) => {
     logger.error('WebSocket error', { error });
   });
+  
+  // Send ping messages to keep connection alive
+  pingInterval = setInterval(() => {
+    if (ws.readyState === 1) { // WebSocket.OPEN
+      try {
+        ws.ping();
+      } catch (error) {
+        logger.error('Failed to send ping', { error });
+      }
+    }
+  }, 30000); // Ping every 30 seconds
+  
+  ws.on('pong', () => {
+    logger.debug('Received pong from client');
+  });
+  
+  // Send initial connection message if no workflowId in URL
+  if (!workflowId) {
+    ws.send(JSON.stringify({ 
+      type: 'connected', 
+      message: 'Connected to SOC2 Testing Platform',
+      timestamp: new Date().toISOString()
+    }));
+  }
 });
 
 // Broadcast workflow updates to subscribed clients
@@ -268,12 +311,11 @@ async function startServer() {
   try {
     logger.info('Initializing services...');
     
-    // Debug environment variables
-    logger.info('Environment check', {
-      DOCKER_HOST: process.env.DOCKER_HOST,
-      MOCK_DOCKER: process.env.MOCK_DOCKER,
-      NODE_ENV: process.env.NODE_ENV
-    });
+    // Set MOCK_DOCKER=true for development without Docker
+    if (!process.env.DOCKER_HOST && process.env.NODE_ENV !== 'production') {
+      process.env.MOCK_DOCKER = 'true';
+      logger.warn('Docker not available, using mock mode');
+    }
     
     // Initialize the workflow controller
     await workflowController.initialize();
@@ -282,10 +324,14 @@ async function startServer() {
     const mcpServer = (workflowController as any).mcpServer;
     if (mcpServer) {
       mcpServer.on('workflow:start', (data: any) => broadcastWorkflowUpdate(data.workflowId, { event: 'start', ...data }));
-      mcpServer.on('workflow:classified', (data: any) => broadcastWorkflowUpdate(data.workflowId, { event: 'classified', ...data }));
-      mcpServer.on('workflow:enriched', (data: any) => broadcastWorkflowUpdate(data.workflowId, { event: 'enriched', ...data }));
-      mcpServer.on('workflow:phase:start', (data: any) => broadcastWorkflowUpdate(data.workflowId, { event: 'phase:start', ...data }));
-      mcpServer.on('workflow:phase:complete', (data: any) => broadcastWorkflowUpdate(data.workflowId, { event: 'phase:complete', ...data }));
+mcpServer.on('workflow:classified', (data: any) => broadcastWorkflowUpdate(data.workflowId, { event: 'classified', ...data }));
+mcpServer.on('workflow:enriched', (data: any) => broadcastWorkflowUpdate(data.workflowId, { event: 'enriched', ...data }));
+mcpServer.on('workflow:phase:start', (data: any) => broadcastWorkflowUpdate(data.workflowId, { event: 'phase:start', ...data }));
+mcpServer.on('workflow:phase:complete', (data: any) => broadcastWorkflowUpdate(data.workflowId, { event: 'phase:complete', ...data }));
+mcpServer.on('workflow:completed', (data: any) => {
+  logger.info('Workflow completed, broadcasting update', { workflowId: data.workflowId });
+  broadcastWorkflowUpdate(data.workflowId, { event: 'completed', ...data });
+});
     }
     
     // Set up periodic cleanup

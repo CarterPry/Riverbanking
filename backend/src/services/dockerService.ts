@@ -36,8 +36,14 @@ export class DockerService extends EventEmitter {
 
   constructor() {
     super();
+    // Extract socket path from DOCKER_HOST if it includes unix:// prefix
+    const dockerHost = process.env.DOCKER_HOST || '/var/run/docker.sock';
+    const socketPath = dockerHost.startsWith('unix://') 
+      ? dockerHost.replace('unix://', '') 
+      : dockerHost;
+    
     this.docker = new Docker({
-      socketPath: process.env.DOCKER_HOST || '/var/run/docker.sock'
+      socketPath: socketPath
     });
     this.activeContainers = new Map();
     this.pullProgress = new Map();
@@ -61,7 +67,7 @@ export class DockerService extends EventEmitter {
       // Pull required base images
       const requiredImages = [
         'kalilinux/kali-rolling',
-        'owasp/zap2docker-stable',
+        'zaproxy/zap-stable',
         'drwetter/testssl.sh',
         'metasploitframework/metasploit-framework'
       ];

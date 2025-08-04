@@ -53,7 +53,9 @@ function Form() {
 
     try {
       const response = await apiService.runWorkflow({
-        ...formData,
+        target: formData.target,
+        scope: formData.testType === 'quick' ? 'security' : 'comprehensive',
+        description: formData.description,
         template: `security-${formData.testType}`,
         auth: formData.username && formData.password ? {
           username: formData.username,
@@ -96,20 +98,7 @@ function Form() {
             />
           </Grid>
 
-          <Grid item xs={12} sm={6}>
-            <TextField
-              fullWidth
-              required
-              name="scope"
-              label="Test Scope"
-              placeholder="e.g., /api/*, /admin/*"
-              value={formData.scope}
-              onChange={handleChange}
-              helperText="URL patterns to include in testing"
-            />
-          </Grid>
-
-          <Grid item xs={12} sm={6}>
+          <Grid item xs={12}>
             <FormControl fullWidth>
               <InputLabel>Test Type</InputLabel>
               <Select
@@ -133,38 +122,6 @@ function Form() {
               placeholder="Describe the purpose and context of this security test"
               value={formData.description}
               onChange={handleChange}
-            />
-          </Grid>
-
-          <Grid item xs={12}>
-            <Typography variant="subtitle1" sx={{ mb: 1 }}>
-              Authentication Simulation (Optional)
-            </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Provide credentials to test authenticated endpoints and enable restraint mechanisms
-            </Typography>
-          </Grid>
-
-          <Grid item xs={12} sm={6}>
-            <TextField
-              fullWidth
-              name="username"
-              label="Username"
-              value={formData.username}
-              onChange={handleChange}
-              helperText="For auth simulation and restraint"
-            />
-          </Grid>
-
-          <Grid item xs={12} sm={6}>
-            <TextField
-              fullWidth
-              type="password"
-              name="password"
-              label="Password"
-              value={formData.password}
-              onChange={handleChange}
-              helperText="Will enable authenticated testing"
             />
           </Grid>
 

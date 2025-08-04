@@ -40,8 +40,12 @@ export class ToolHandler {
     // Ensure output directory exists
     await fs.mkdir(this.outputBaseDir, { recursive: true });
     
-    // Initialize Docker service
-    await this.dockerService.initialize();
+    // Initialize Docker service only if not in mock mode
+    if (process.env.MOCK_DOCKER !== 'true') {
+      await this.dockerService.initialize();
+    } else {
+      logger.info('Docker initialization skipped - using mock mode');
+    }
     
     logger.info('Tool handler initialized');
   }
@@ -147,7 +151,7 @@ export class ToolHandler {
       }
     };
 
-    if (process.env.MOCK_DOCKER === 'true') {
+            if (process.env.MOCK_DOCKER === 'true' || process.env.NODE_ENV === 'development') {
       // Mock execution for testing
       logger.info('Mock Docker execution', { tool: tool.name, command });
       return {

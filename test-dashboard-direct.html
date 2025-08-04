@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dashboard Direct Test</title>
+    <script>
+        function testDashboard(workflowId) {
+            // Simulate navigating to dashboard with workflow state
+            window.location.href = `http://localhost:3001/dashboard#workflowId=${workflowId}`;
+        }
+    </script>
+</head>
+<body>
+    <h1>Test Dashboard Navigation</h1>
+    <button onclick="testDashboard('c95ede55-92c5-4da5-bf46-50d10fc7ea5b')">
+        Open Dashboard with New Workflow
+    </button>
+    <br><br>
+    <button onclick="testDashboard('0c171de4-e517-4d7c-92f2-d5afe0e06dbf')">
+        Open Dashboard with Completed Workflow
+    </button>
+</body>
+</html>

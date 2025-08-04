@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   Box,
   Paper,
@@ -50,6 +50,10 @@ interface DashboardState {
 }
 
 function Dashboard({ workflowId }: { workflowId?: string }) {
+  console.log('Dashboard component rendering', { workflowId, time: new Date().toISOString() });
+  
+  const wsRef = useRef<any>(null); // Store WebSocket reference
+  const isCompletedRef = useRef(false); // Track if workflow is already completed
   const [state, setState] = useState<DashboardState>({
     progress: 'Initializing...',
     score: 0,
@@ -65,13 +69,83 @@ function Dashboard({ workflowId }: { workflowId?: string }) {
   const [showHITLDialog, setShowHITLDialog] = useState(false);
 
   useEffect(() => {
+    console.log('Dashboard useEffect triggered', { workflowId, time: new Date().toISOString() });
     if (!workflowId) return;
 
-    const ws = connect(
+    // Close existing connection if any
+    if (wsRef.current) {
+      console.log('Closing existing WebSocket connection');
+      wsRef.current.close();
+    }
+
+    wsRef.current = connect(
       `ws://localhost:3000/ws?workflowId=${workflowId}`,
       (msg: WebSocketMessage) => {
         // Handle different message types
-        switch (msg.type) {
+        console.log('Received WebSocket message:', msg);
+        
+        try {
+          switch (msg.type) {
+          case 'workflow-status':
+            console.log('Processing workflow-status message', { status: msg.status, hasResult: !!msg.result });
+            // Handle completed workflow status
+            if (msg.status === 'completed') {
+              console.log('Workflow is completed, marking as such');
+              isCompletedRef.current = true;
+              
+              // Check if results are included in the message
+              if (msg.result) {
+                console.log('Setting state with results from WebSocket message');
+                setState(prev => ({
+                  ...prev,
+                  status: 'complete',
+                  progress: 'Workflow completed',
+                  score: msg.result.overallScore || 0,
+                  findings: msg.result.testResults || [],
+                }));
+              } else {
+                // Fallback to REST API if results not included
+                setState(prev => ({
+                  ...prev,
+                  status: 'complete',
+                  progress: 'Workflow completed. Loading results...'
+                }));
+                
+                apiService.getWorkflowStatus(workflowId)
+                  .then(result => {
+                    if (result.results) {
+                      setState(prev => ({
+                        ...prev,
+                        score: result.results.overallScore || 0,
+                        findings: result.results.testResults || [],
+                        status: 'complete'
+                      }));
+                    }
+                  })
+                  .catch(err => {
+                    console.error('Failed to fetch results:', err);
+                  });
+              }
+            } else if (msg.status === 'not-found') {
+              // Handle workflow not found
+              console.log('Workflow not found, displaying message');
+              setState(prev => ({
+                ...prev,
+                status: 'error',
+                progress: 'Workflow not found. It may have expired or the server was restarted.',
+                score: 0,
+                findings: []
+              }));
+            } else {
+              // Handle other workflow statuses
+              setState(prev => ({
+                ...prev,
+                status: msg.status === 'running' ? 'running' : prev.status,
+                progress: msg.message || prev.progress
+              }));
+            }
+            break;
+            
           case 'restraint':
             if (msg.restraint === 'requiresAuth') {
               setState(prev => ({ ...prev, status: 'awaiting-auth', requiresAuth: true }));
@@ -92,7 +166,7 @@ function Dashboard({ workflowId }: { workflowId?: string }) {
             setState(prev => ({
               ...prev,
               ...msg.data,
-              status: msg.data.status || prev.status
+              status: msg.data?.status || prev.status
             }));
             break;
           
@@ -103,14 +177,42 @@ function Dashboard({ workflowId }: { workflowId?: string }) {
               status: 'complete'
             }));
             break;
+            
+          case 'workflow-update':
+            console.log('Processing workflow-update message', { event: msg.update?.event, hasResults: !!msg.update?.results });
+            // Handle workflow completed update
+            if (msg.update?.event === 'completed' && msg.update?.results) {
+              console.log('Workflow completed with results from update');
+              isCompletedRef.current = true;
+              setState(prev => ({
+                ...prev,
+                status: 'complete',
+                progress: 'Workflow completed',
+                score: msg.update.results.overallScore || 0,
+                findings: msg.update.results.testResults || [],
+              }));
+            }
+            break;
           
           case 'error':
             setState(prev => ({
               ...prev,
               status: 'error',
-              progress: msg.data.message || 'An error occurred'
+              progress: msg.data?.message || 'An error occurred'
             }));
             break;
+            
+          case 'connected':
+          case 'subscribed':
+            // These are connection status messages, just log them
+            console.log('Connection status:', msg.type, msg.message);
+            break;
+            
+          default:
+            console.log('Unhandled WebSocket message type:', msg.type, msg);
+          }
+        } catch (error) {
+          console.error('Error handling WebSocket message:', error, msg);
         }
       },
       (error) => {
@@ -119,7 +221,13 @@ function Dashboard({ workflowId }: { workflowId?: string }) {
       }
     );
 
-    return () => ws.close();
+    return () => {
+      console.log('Dashboard useEffect cleanup - closing WebSocket', { workflowId, time: new Date().toISOString() });
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+    };
   }, [workflowId]);
 
   const getRestraintColor = () => {

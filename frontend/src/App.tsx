@@ -6,6 +6,8 @@ import Dashboard from './pages/Dashboard';
 import ResultsPage from './pages/ResultsPage';
 
 function App() {
+  console.log('App component is rendering...');
+  
   return (
     <Router>
       <Box sx={{ flexGrow: 1 }}>

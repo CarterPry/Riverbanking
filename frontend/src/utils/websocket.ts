@@ -32,8 +32,14 @@ export function connect(
       ws = new WebSocket(url);
 
       ws.onopen = () => {
-        console.log('WebSocket connected');
+        console.log('WebSocket connected', {
+          url: url,
+          readyState: ws.readyState,
+          time: new Date().toISOString()
+        });
         reconnectAttempts = 0;
+        
+        // Server auto-subscribes based on URL parameter, no need to send subscribe message
       };
 
       ws.onmessage = (event) => {
@@ -43,19 +49,10 @@ export function connect(
           // Handle restraint notifications
           if (message.restraint === 'requiresAuth') {
             console.warn('Restraint: Authentication required for workflow');
-            // Could trigger UI notification here
-            if (typeof window !== 'undefined' && window.alert) {
-              window.alert('Restraint: Authentication Required - Awaiting HITL');
-            }
           }
           
           if (message.restraint === 'requiresHITL') {
             console.warn('Restraint: HITL approval required', message.hitlReasons);
-            // Could trigger UI notification here
-            if (typeof window !== 'undefined' && window.alert) {
-              const reasons = message.hitlReasons?.join('\n') || 'Manual approval required';
-              window.alert(`HITL Approval Needed:\n${reasons}`);
-            }
           }
           
           onMessage(message);
@@ -77,10 +74,24 @@ export function connect(
         }
       };
 
-      ws.onclose = () => {
-        console.log('WebSocket disconnected');
+      ws.onclose = (event) => {
+        console.log('WebSocket disconnected', {
+          code: event.code,
+          reason: event.reason,
+          wasClean: event.wasClean,
+          time: new Date().toISOString(),
+          url: url,
+          reconnectAttempts: reconnectAttempts,
+          shouldReconnect: shouldReconnect
+        });
         
-        if (shouldReconnect && reconnectAttempts < maxReconnectAttempts) {
+        // Don't reconnect if manually closed (code 1000) or if shouldReconnect is false
+        if (event.code === 1000 || !shouldReconnect) {
+          console.log('Not reconnecting - manual close or reconnect disabled');
+          return;
+        }
+        
+        if (reconnectAttempts < maxReconnectAttempts) {
           reconnectAttempts++;
           console.log(`Reconnecting... (attempt ${reconnectAttempts}/${maxReconnectAttempts})`);
           
@@ -89,6 +100,8 @@ export function connect(
               connect();
             }
           }, reconnectDelay * reconnectAttempts);
+        } else {
+          console.log('Max reconnect attempts reached');
         }
       };
     } catch (error) {

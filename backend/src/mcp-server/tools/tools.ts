@@ -44,7 +44,7 @@ export const tools: SecurityTool[] = [
     progressive: true,
     evidenceRequired: ['vulnerability_report', 'payload_examples'],
     timeout: 180000, // 3 minutes
-    containerImage: 'owasp/zap2docker-stable'
+    containerImage: 'zaproxy/zap-stable'
   },
   {
     name: 'clickjacking',
@@ -148,7 +148,7 @@ export const tools: SecurityTool[] = [
     progressive: true,
     evidenceRequired: ['endpoint_vulnerabilities', 'authentication_issues', 'data_exposure'],
     timeout: 420000, // 7 minutes
-    containerImage: 'owasp/zap2docker-stable'
+    containerImage: 'zaproxy/zap-stable'
   }
 ];
 

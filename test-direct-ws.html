@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Test</title>
+</head>
+<body>
+    <h1>Direct WebSocket Test</h1>
+    <div id="status">Connecting...</div>
+    <div id="messages"></div>
+    
+    <script>
+        const workflowId = 'ccd0360f-85f7-4982-bd40-3a935829fe7a';
+        const ws = new WebSocket(`ws://localhost:3000/ws?workflowId=${workflowId}`);
+        const status = document.getElementById('status');
+        const messages = document.getElementById('messages');
+        
+        function log(message) {
+            const div = document.createElement('div');
+            div.textContent = `[${new Date().toISOString()}] ${message}`;
+            messages.appendChild(div);
+            console.log(message);
+        }
+        
+        ws.onopen = (event) => {
+            status.textContent = 'Connected';
+            log('WebSocket opened');
+        };
+        
+        ws.onmessage = (event) => {
+            log(`Message received: ${event.data}`);
+            try {
+                const msg = JSON.parse(event.data);
+                log(`Message type: ${msg.type}, status: ${msg.status}`);
+            } catch (e) {
+                log(`Failed to parse message: ${e}`);
+            }
+        };
+        
+        ws.onerror = (event) => {
+            status.textContent = 'Error';
+            log(`WebSocket error: ${event}`);
+        };
+        
+        ws.onclose = (event) => {
+            status.textContent = `Closed (code: ${event.code}, reason: ${event.reason})`;
+            log(`WebSocket closed - code: ${event.code}, reason: ${event.reason}, wasClean: ${event.wasClean}`);
+        };
+        
+        // Keep the page alive
+        setInterval(() => {
+            log(`WebSocket state: ${ws.readyState} (0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED)`);
+        }, 5000);
+    </script>
+</body>
+</html>

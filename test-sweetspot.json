@@ -1,0 +1,62 @@
+{
+  "authorized_test_target": {
+    "domain": "sweetspot.so",
+    "has_permission": true,
+    "has_roe": true,
+    "note": "Authorized testing target with established Rules of Engagement"
+  },
+  "test_scenarios": [
+    {
+      "scenario": "Sweetspot Main Site Quick Scan",
+      "input": {
+        "target": "https://sweetspot.so",
+        "scope": "/*",
+        "description": "Quick security scan of sweetspot.so main website - authorized testing",
+        "testType": "quick"
+      }
+    },
+    {
+      "scenario": "Sweetspot Comprehensive Security Test",
+      "input": {
+        "target": "https://sweetspot.so",
+        "scope": "/*",
+        "description": "Comprehensive security assessment of sweetspot.so - full authorized penetration test",
+        "testType": "comprehensive"
+      }
+    },
+    {
+      "scenario": "Sweetspot API Endpoints Test",
+      "input": {
+        "target": "https://api.sweetspot.so",
+        "scope": "/api/*, /v1/*, /graphql/*",
+        "description": "API security testing for sweetspot.so - checking for common API vulnerabilities",
+        "testType": "comprehensive"
+      }
+    },
+    {
+      "scenario": "Sweetspot App Subdomain Test",
+      "input": {
+        "target": "https://app.sweetspot.so",
+        "scope": "/*",
+        "description": "Security assessment of sweetspot.so application subdomain",
+        "testType": "comprehensive"
+      }
+    },
+    {
+      "scenario": "Sweetspot Authentication Flow Test",
+      "input": {
+        "target": "https://sweetspot.so",
+        "scope": "/auth/*, /login/*, /signup/*, /api/auth/*",
+        "description": "Focused testing on authentication and authorization flows",
+        "testType": "comprehensive",
+        "username": "test@sweetspot.so",
+        "password": "TestPassword123!"
+      }
+    }
+  ],
+  "usage_examples": {
+    "quick_test": "node test-user-input-runner.js --scenario 'Sweetspot Main Site Quick Scan'",
+    "full_test": "python3 test-user-input-runner.py --scenario 'Sweetspot Comprehensive Security Test'",
+    "all_tests": "python3 test-user-input-runner.py --report --save-results"
+  }
+}

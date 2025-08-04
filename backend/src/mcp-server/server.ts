@@ -93,10 +93,18 @@ export class MCPServer extends EventEmitter {
       );
 
       // Step 5: Aggregate results
-      const aggregatedResults = this.aggregateResults(workflowId, testResults);
+      const aggregatedResults = this.aggregateResults(workflowId, testResults, context);
       
       const duration = Date.now() - startTime;
       logWorkflowEnd(workflowId, duration, 'success', aggregatedResults);
+
+      // Emit workflow completed event
+      this.emit('workflow:completed', {
+        workflowId,
+        status: 'completed',
+        duration,
+        results: aggregatedResults
+      });
 
       return {
         workflowId,
@@ -171,19 +179,21 @@ export class MCPServer extends EventEmitter {
   }
 
   /**
-   * Mock intent classification (will be replaced by actual implementation)
+   * Intent classification - runs comprehensive tests regardless of scope
+   * Scope is used for post-processing categorization, not pre-filtering
    */
   private async classifyIntent(context: MCPContext): Promise<ClassificationResult> {
-    // This is a simplified mock - actual implementation will use embeddings
+    // Run all available security tests for comprehensive coverage
+    // The scope parameter will be used later to categorize findings
     const intent: Intent = {
       id: uuidv4(),
       type: 'security',
       rawInput: context.description || context.target,
-      matchedAttacks: tools.slice(0, 5).map(tool => ({
+      matchedAttacks: tools.map(tool => ({
         attackId: tool.name,
         attackName: tool.attackType,
         description: tool.description,
-        similarity: 0.85,
+        similarity: 0.85, // All tools are relevant for comprehensive testing
         tsc: tool.tsc,
         cc: tool.cc,
         tools: [{
@@ -203,8 +213,8 @@ export class MCPServer extends EventEmitter {
 
     return {
       intent,
-      suggestedMethodology: 'standard',
-      estimatedDuration: 1800000, // 30 minutes
+      suggestedMethodology: 'comprehensive', // Always run comprehensive tests
+      estimatedDuration: 3600000, // 60 minutes for full test suite
       requiresHITL: false
     };
   }
@@ -384,15 +394,25 @@ export class MCPServer extends EventEmitter {
   }
 
   /**
-   * Aggregate test results
+   * Aggregate test results and categorize findings post-hoc
    */
-  private aggregateResults(workflowId: string, testResults: TestResult[]): AggregatedResults {
+  private aggregateResults(workflowId: string, testResults: TestResult[], context?: MCPContext): AggregatedResults {
     const findingsBySeverity: Record<string, number> = {
       critical: 0,
       high: 0,
       medium: 0,
       low: 0,
       info: 0
+    };
+
+    // Post-processing categorization of findings
+    const findingsByCategory: Record<string, TestResult[]> = {
+      security: [],
+      availability: [],
+      authentication: [],
+      authorization: [],
+      'data-integrity': [],
+      comprehensive: []
     };
 
     let totalFindings = 0;
@@ -413,6 +433,17 @@ export class MCPServer extends EventEmitter {
       result.findings.forEach(finding => {
         findingsBySeverity[finding.severity]++;
       });
+
+      // Categorize test results based on the tool's TSC (Trust Service Criteria)
+      const tool = tools.find(t => t.name === result.tool);
+      if (tool && tool.tsc) {
+        tool.tsc.forEach(category => {
+          const categoryKey = category.toLowerCase().replace(' ', '-');
+          if (findingsByCategory[categoryKey]) {
+            findingsByCategory[categoryKey].push(result);
+          }
+        });
+      }
     });
 
     // Calculate overall score (100 - weighted severity sum)
@@ -422,6 +453,12 @@ export class MCPServer extends EventEmitter {
       0
     );
     const overallScore = Math.max(0, 100 - Math.min(weightedSum, 100));
+
+    // Filter results by scope if provided
+    let filteredResults = testResults;
+    if (context?.scope && context.scope !== 'comprehensive') {
+      filteredResults = findingsByCategory[context.scope] || testResults;
+    }
 
     return {
       workflowId,
@@ -436,7 +473,9 @@ export class MCPServer extends EventEmitter {
         cpuUsage: 50,
         memoryUsage: 2048 * 1024 * 1024
       },
-      testResults
+      testResults: filteredResults,
+      // Include categorization metadata
+      categorizedFindings: findingsByCategory
     };
   }
 

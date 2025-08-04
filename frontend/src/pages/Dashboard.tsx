@@ -9,7 +9,16 @@ import Dashboard from '../components/Dashboard';
 
 function DashboardPage() {
   const location = useLocation();
-  const workflowId = location.state?.workflowId;
+  // Get workflowId from state or URL params
+  const searchParams = new URLSearchParams(location.search);
+  const workflowId = location.state?.workflowId || searchParams.get('workflowId');
+  
+  console.log('DashboardPage rendering', { 
+    workflowId, 
+    fromState: location.state?.workflowId,
+    fromUrl: searchParams.get('workflowId'),
+    time: new Date().toISOString() 
+  });
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>

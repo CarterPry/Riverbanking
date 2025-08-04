@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Minimal WebSocket Test</title>
+</head>
+<body>
+    <h1>Minimal WebSocket Test</h1>
+    <div id="status">Initializing...</div>
+    <button onclick="connect()">Connect</button>
+    <button onclick="disconnect()">Disconnect</button>
+    <div id="log"></div>
+    
+    <script>
+        let ws = null;
+        const workflowId = '0c171de4-e517-4d7c-92f2-d5afe0e06dbf';
+        
+        function log(msg) {
+            const logDiv = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.textContent = `[${new Date().toISOString().substring(11, 19)}] ${msg}`;
+            logDiv.appendChild(entry);
+            console.log(msg);
+        }
+        
+        function updateStatus(msg) {
+            document.getElementById('status').textContent = msg;
+        }
+        
+        function connect() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                log('Already connected');
+                return;
+            }
+            
+            log('Connecting...');
+            ws = new WebSocket(`ws://localhost:3000/ws?workflowId=${workflowId}`);
+            
+            ws.onopen = () => {
+                updateStatus('Connected');
+                log('WebSocket opened');
+            };
+            
+            ws.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    log(`Message: type=${msg.type}, status=${msg.status}, size=${event.data.length} bytes`);
+                    
+                    if (msg.type === 'workflow-status' && msg.status === 'completed') {
+                        log('Received completed workflow status');
+                        // Intentionally NOT closing the connection
+                        log('Connection should remain open...');
+                    }
+                } catch (e) {
+                    log(`Parse error: ${e.message}`);
+                }
+            };
+            
+            ws.onerror = (error) => {
+                updateStatus('Error');
+                log(`WebSocket error: ${error}`);
+            };
+            
+            ws.onclose = (event) => {
+                updateStatus(`Closed (${event.code})`);
+                log(`WebSocket closed: code=${event.code}, reason=${event.reason}, wasClean=${event.wasClean}`);
+            };
+        }
+        
+        function disconnect() {
+            if (ws) {
+                log('Manually closing WebSocket');
+                ws.close();
+                ws = null;
+            }
+        }
+        
+        // Auto-connect on load
+        connect();
+        
+        // Monitor connection state
+        setInterval(() => {
+            if (ws) {
+                log(`Connection state: ${ws.readyState} (0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED)`);
+            }
+        }, 5000);
+    </script>
+</body>
+</html>

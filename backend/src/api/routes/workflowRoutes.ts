@@ -58,6 +58,13 @@ export function createWorkflowRoutes(controller: WorkflowController): Router {
       } else {
         // For development/testing, allow unauthenticated access if no auth is configured
         if (process.env.NODE_ENV === 'development' && !apiKeys.size && jwtSecret === 'development-secret') {
+          // Set a mock user for development
+          req.user = {
+            id: 'dev-user',
+            email: 'dev@localhost',
+            role: 'developer',
+            permissions: ['workflow:run', 'workflow:read', 'workflow:cancel', 'queue:read']
+          };
           next();
         } else {
           res.status(401).json({

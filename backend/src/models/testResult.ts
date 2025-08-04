@@ -57,4 +57,5 @@ export interface AggregatedResults {
   totalDuration: number;
   totalCost: CostMetrics;
   testResults: TestResult[];
+  categorizedFindings?: Record<string, TestResult[]>; // Post-processing categorization
 } 
