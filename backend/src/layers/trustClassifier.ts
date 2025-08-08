@@ -14,10 +14,38 @@ export interface TrustClassificationResult {
 }
 
 export class TrustClassifier {
+  async initialize(): Promise<void> {
+    logger.info('Trust classifier initialized');
+  }
+  
+  /**
+   * Classify attacks and return methodology
+   */
+  classify(params: { target: string; input: string; attacks: any[] }): { methodology: string; requiresHITL: boolean } {
+    // Convert matched attacks to Attack format
+    const attacks: Attack[] = params.attacks.map(a => ({
+      id: a.attackId,
+      name: a.attackName,
+      description: a.description,
+      tsc: a.tsc,
+      cc: a.cc,
+      category: 'SECURITY',
+      command: []
+    }));
+    
+    const result = this.classifyAttacks(attacks);
+    const methodologyResult = this.getRecommendedMethodology(result.primaryTSC);
+    
+    return {
+      methodology: methodologyResult.methodology,
+      requiresHITL: methodologyResult.requiresHITL
+    };
+  }
+  
   /**
    * Maps attacks to Trust Service Categories and CC codes
    */
-  classify(matchedAttacks: Attack[]): TrustClassificationResult {
+  classifyAttacks(matchedAttacks: Attack[]): TrustClassificationResult {
     logger.debug('Classifying trust categories', { attacks: matchedAttacks.length });
     
     // Aggregate TSC and CC from all matched attacks

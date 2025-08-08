@@ -1,0 +1,7 @@
+{
+  "target": "example.com",
+  "userIntent": "First find subdomains, then scan ports on those subdomains",
+  "constraints": {
+    "environment": "development"
+  }
+}

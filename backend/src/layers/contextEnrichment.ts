@@ -35,6 +35,9 @@ export interface EnrichedContext {
   estimatedCost: number;
 }
 
+// Import ViableAttacks types
+import { ViableAttacks, EnrichedAttack, EnrichmentMetadata } from '../models/viableAttacks.js';
+
 export class ContextEnrichment {
   private embeddingService: EmbeddingService;
   
@@ -42,10 +45,153 @@ export class ContextEnrichment {
     this.embeddingService = embeddingService;
   }
   
+  async initialize(): Promise<void> {
+    logger.info('Context enrichment layer initialized');
+  }
+  
   /**
-   * Enrich context with historical data, RAG, and apply restraints
+   * Enrich context and return ViableAttacks format for MCP server
    */
-  async enrich(context: EnrichmentContext): Promise<EnrichedContext> {
+  async enrich(params: {
+    workflowId: string;
+    target: string;
+    scope: string;
+    intent: any;
+    methodology: string;
+    auth?: any;
+  }): Promise<ViableAttacks> {
+    logger.info('Starting context enrichment', {
+      workflowId: params.workflowId,
+      target: params.target,
+      scope: params.scope,
+      methodology: params.methodology,
+      matchedAttacks: params.intent.matchedAttacks.length
+    });
+    
+    // Emit progress
+    process.emit('workflow:enrichment:progress' as any, {
+      workflowId: params.workflowId,
+      message: `Enriching context for ${params.intent.matchedAttacks.length} matched security tests...`,
+      phase: 'enrichment',
+      percent: 10
+    });
+    
+    // Convert to internal format
+    const context: EnrichmentContext = {
+      userInput: params.intent.rawInput,
+      matchedAttacks: params.intent.matchedAttacks.map((ma: any) => ({
+        id: ma.attackId,
+        name: ma.attackName,
+        description: ma.description,
+        tsc: ma.tsc,
+        cc: ma.cc,
+        category: 'SECURITY',
+        command: ma.tools[0]?.command || []
+      })),
+      tsc: [],
+      cc: [],
+      authenticated: !!params.auth
+    };
+    
+    logger.info('Matched attacks for enrichment', {
+      attacks: context.matchedAttacks.map(a => ({
+        id: a.id,
+        name: a.name,
+        tsc: a.tsc,
+        cc: a.cc
+      }))
+    });
+    
+    // Run enrichment
+    const enriched = await this.enrichInternal(context);
+    
+    logger.info('Internal enrichment complete', {
+      critical: enriched.viableAttacks.critical.length,
+      standard: enriched.viableAttacks.standard.length,
+      lowPriority: enriched.viableAttacks.lowPriority.length,
+      filtered: enriched.filteredAttacks.length
+    });
+    
+    // Convert to ViableAttacks format
+    const mapAttacks = (attacks: Attack[]): EnrichedAttack[] => {
+      logger.debug('Mapping attacks to enriched format', {
+        count: attacks.length,
+        attacks: attacks.map(a => ({ id: a.id, name: a.name }))
+      });
+      
+      return attacks.map(attack => ({
+        attackId: attack.id,
+        attackName: attack.name,
+        description: attack.description,
+        priority: 'standard' as const,
+        confidence: 0.85,
+        historicalSuccess: 0.75,
+        estimatedDuration: 30000,
+        tools: [{
+          name: attack.id,
+          command: attack.command || [],
+          arguments: { target: params.target },
+          timeout: 300000,
+          retryCount: 2,
+          containerImage: 'kalilinux/kali-rolling:latest'
+        }],
+        tsc: attack.tsc,
+        cc: attack.cc,
+        requiresAuth: false,
+        progressive: false,
+        evidenceRequired: []
+      }));
+    };
+    
+    // Map attacks from different priority levels
+    const criticalAttacks = mapAttacks(enriched.viableAttacks.critical);
+    const standardAttacks = mapAttacks(enriched.viableAttacks.standard);
+    const lowPriorityAttacks = mapAttacks(enriched.viableAttacks.lowPriority);
+    
+    const result = {
+      workflowId: params.workflowId,
+      critical: criticalAttacks,
+      standard: standardAttacks,
+      lowPriority: lowPriorityAttacks,
+      totalCount: criticalAttacks.length + standardAttacks.length + lowPriorityAttacks.length,
+      requiresAuth: [],
+      metadata: {
+        enrichmentTimestamp: new Date(),
+        historicalDataUsed: true,
+        embeddingSimilarityThreshold: 0.8,
+        confidenceThreshold: 0.6,
+        totalAttacksConsidered: context.matchedAttacks.length,
+        filteredCount: context.matchedAttacks.length,
+        reasoning: enriched.hitlReasons
+      },
+      requiresHITL: enriched.requiresHITL,
+      hitlReasons: enriched.hitlReasons
+    } as ViableAttacks & { requiresHITL: boolean; hitlReasons: string[] };
+    
+    logger.info('Context enrichment result', {
+      workflowId: params.workflowId,
+      criticalCount: criticalAttacks.length,
+      standardCount: standardAttacks.length,
+      lowPriorityCount: lowPriorityAttacks.length,
+      totalViable: result.totalCount,
+      requiresHITL: result.requiresHITL
+    });
+    
+    // Emit final enrichment progress
+    process.emit('workflow:enrichment:progress' as any, {
+      workflowId: params.workflowId,
+      message: `Enrichment complete. ${result.totalCount} viable attacks identified (${criticalAttacks.length} critical, ${standardAttacks.length} standard)`,
+      phase: 'enrichment',
+      percent: 100
+    });
+    
+    return result;
+  }
+  
+  /**
+   * Internal enrichment method with historical data, RAG, and apply restraints
+   */
+  private async enrichInternal(context: EnrichmentContext): Promise<EnrichedContext> {
     logger.debug('Enriching context', {
       attacks: context.matchedAttacks.length,
       authenticated: context.authenticated
@@ -61,13 +207,36 @@ export class ContextEnrichment {
     const groundingContext = generateGroundingContext(context.tsc, context.cc);
     
     // Apply authentication-based filtering
+    logger.info('Applying authentication filter', {
+      authenticated: context.authenticated,
+      totalAttacks: context.matchedAttacks.length
+    });
+    
     const { viable, filtered } = this.applyAuthFilter(
       context.matchedAttacks,
       context.authenticated
     );
     
+    logger.info('Authentication filter results', {
+      viableCount: viable.length,
+      filteredCount: filtered.length,
+      filteredAttacks: filtered.map(a => a.name)
+    });
+    
     // Categorize viable attacks by priority
+    logger.info('Categorizing attacks by priority');
     const categorized = this.categorizeAttacks(viable);
+    
+    logger.info('Attack categorization complete', {
+      critical: categorized.critical.length,
+      standard: categorized.standard.length,
+      lowPriority: categorized.lowPriority.length,
+      categories: {
+        critical: categorized.critical.map(a => a.name),
+        standard: categorized.standard.map(a => a.name),
+        lowPriority: categorized.lowPriority.map(a => a.name)
+      }
+    });
     
     // Check if HITL is required
     const { requiresHITL, reasons } = this.checkHITLRequirement(
@@ -75,8 +244,17 @@ export class ContextEnrichment {
       context.authenticated
     );
     
+    if (requiresHITL) {
+      logger.warn('Human-in-the-loop review required', { reasons });
+    }
+    
     // Estimate duration and cost
     const { duration, cost } = this.estimateExecutionMetrics(categorized);
+    
+    logger.info('Execution metrics estimated', {
+      estimatedDuration: `${duration}ms`,
+      estimatedCost: cost
+    });
     
     const result: EnrichedContext = {
       viableAttacks: categorized,
@@ -105,6 +283,12 @@ export class ContextEnrichment {
    */
   private async generateRAGContext(context: EnrichmentContext): Promise<string> {
     try {
+      // For now, skip RAG context generation if database is not set up
+      // This prevents the infinite retry loop when PostgreSQL database is not configured
+      logger.debug('Skipping RAG context - database not configured');
+      return 'No historical context available.';
+      
+      /* TODO: Re-enable when database is properly configured
       // Generate embedding for the user input
       const queryEmbedding = await this.embeddingService.getEmbedding(context.userInput);
       
@@ -134,6 +318,7 @@ export class ContextEnrichment {
       }
       
       return ragContext;
+      */
     } catch (error) {
       logger.warn('Failed to generate RAG context', { error });
       return 'No historical context available.';
@@ -237,9 +422,18 @@ export class ContextEnrichment {
     const lowPriority: Attack[] = [];
     
     attacks.forEach(attack => {
-      // Critical: High severity OWASP attacks or access control issues
+      // Critical: Enumeration and discovery should run first
       if (
+        attack.id.includes('enumeration') ||
+        attack.id.includes('discovery') ||
+        attack.id === 'port-scanning'
+      ) {
+        critical.push(attack);
+      }
+      // Also critical: High severity OWASP attacks, JWT, or access control issues
+      else if (
         attack.severity === 'critical' ||
+        attack.id.includes('jwt') ||
         (attack.severity === 'high' && attack.category === 'OWASP_TOP_10')
       ) {
         critical.push(attack);

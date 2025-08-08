@@ -9,6 +9,13 @@ import { createLogger, logWorkflowStart, logWorkflowEnd, logAttackExecution } fr
 import { Semaphore } from '../utils/semaphore.js';
 import { safeStringify } from '../utils/serialize.js';
 
+// Import AI layers as per blueprint
+import { EmbeddingService } from '../services/embeddingService.js';
+import { IntentClassifier } from '../layers/intentClassification.js';
+import { ContextEnrichment } from '../layers/contextEnrichment.js';
+import { TrustClassifier } from '../layers/trustClassifier.js';
+import { HITLReview } from '../layers/hitlReview.js';
+
 const logger = createLogger('MCPServer');
 
 export interface MCPContext {
@@ -40,12 +47,24 @@ export class MCPServer extends EventEmitter {
   private toolHandler: ToolHandler;
   private semaphore: Semaphore;
   private activeWorkflows: Map<string, AbortController>;
+  private embeddingService: EmbeddingService;
+  private intentClassifier: IntentClassifier;
+  private contextEnrichment: ContextEnrichment;
+  private trustClassifier: TrustClassifier;
+  private hitlReview: HITLReview;
 
   constructor() {
     super();
     this.toolHandler = new ToolHandler();
-    this.semaphore = new Semaphore(Number(process.env.MAX_CONCURRENT) || 4);
+    this.semaphore = new Semaphore(Number(process.env.MAX_CONCURRENT) || 2); // Reduced for realistic timing
     this.activeWorkflows = new Map();
+    
+    // Initialize AI layers as per blueprint
+    this.embeddingService = new EmbeddingService();
+    this.intentClassifier = new IntentClassifier(this.embeddingService);
+    this.contextEnrichment = new ContextEnrichment(this.embeddingService);
+    this.trustClassifier = new TrustClassifier();
+    this.hitlReview = new HITLReview();
   }
 
   /**
@@ -53,7 +72,17 @@ export class MCPServer extends EventEmitter {
    */
   async initialize(): Promise<void> {
     logger.info('Initializing MCP server');
-    await this.toolHandler.initialize();
+    
+    // Initialize all layers as per blueprint
+    await Promise.all([
+      this.toolHandler.initialize(),
+      this.embeddingService.initialize(),
+      this.intentClassifier.initialize?.() || Promise.resolve(),
+      this.contextEnrichment.initialize(),
+      this.trustClassifier.initialize(),
+      this.hitlReview.initialize()
+    ]);
+    
     logger.info('MCP server initialized successfully');
   }
 
@@ -145,6 +174,15 @@ export class MCPServer extends EventEmitter {
 
     const attackId = uuidv4();
     logAttackExecution(workflowId, attackId, toolName, 'start', { params });
+    
+    // Emit detailed attack start event
+    this.emit('workflow:attack:start', {
+      workflowId,
+      attackId,
+      tool: toolName,
+      params,
+      timestamp: new Date().toISOString()
+    });
 
     try {
       const result = await this.toolHandler.execute({
@@ -157,6 +195,18 @@ export class MCPServer extends EventEmitter {
       logAttackExecution(workflowId, attackId, toolName, 'end', { 
         status: result.status,
         findings: result.findings.length 
+      });
+      
+      // Emit detailed attack complete event
+      this.emit('workflow:attack:complete', {
+        workflowId,
+        attackId,
+        tool: toolName,
+        status: result.status,
+        findings: result.findings,
+        rawOutput: result.rawOutput,
+        duration: result.duration,
+        timestamp: new Date().toISOString()
       });
 
       return result;
@@ -179,44 +229,78 @@ export class MCPServer extends EventEmitter {
   }
 
   /**
-   * Intent classification - runs comprehensive tests regardless of scope
-   * Scope is used for post-processing categorization, not pre-filtering
+   * Intent classification using AI embeddings
    */
   private async classifyIntent(context: MCPContext): Promise<ClassificationResult> {
-    // Run all available security tests for comprehensive coverage
-    // The scope parameter will be used later to categorize findings
+    logger.info('Classifying intent with AI', { 
+      target: context.target, 
+      description: context.description 
+    });
+    
+    // Use the actual AI intent classifier
+    try {
+      const classificationResult = await this.intentClassifier.classify(
+        context.description || `Security test for ${context.target}`,
+        context.workflowId
+      );
+    
+    // Map the IntentClassificationResult to our ClassificationResult format
     const intent: Intent = {
       id: uuidv4(),
       type: 'security',
       rawInput: context.description || context.target,
-      matchedAttacks: tools.map(tool => ({
-        attackId: tool.name,
-        attackName: tool.attackType,
-        description: tool.description,
-        similarity: 0.85, // All tools are relevant for comprehensive testing
-        tsc: tool.tsc,
-        cc: tool.cc,
-        tools: [{
-          name: tool.name,
-          command: tool.command,
-          priority: 'standard',
-          estimatedDuration: tool.timeout || 180000,
-          resourceRequirements: {}
-        }],
-        requiresAuth: tool.requiresAuth,
-        progressive: tool.progressive,
-        evidenceRequired: tool.evidenceRequired
-      })),
-      confidence: 0.85,
+      matchedAttacks: classificationResult.matchedAttacks
+        .filter(match => match.relevance !== 'low') // Only include medium/high relevance
+        .map(match => ({
+          attackId: match.attack.id,
+          attackName: match.attack.name,
+          description: match.attack.description,
+          similarity: match.similarity,
+          tsc: match.attack.tsc,
+          cc: match.attack.cc,
+          tools: [{
+            name: match.attack.id,
+            command: match.attack.command || [],
+            priority: match.relevance === 'high' ? 'critical' : 'standard',
+            estimatedDuration: match.attack.timeout || 180000,
+            resourceRequirements: {}
+          }],
+          requiresAuth: match.attack.requiresAuth || false,
+          progressive: match.attack.progressive || false,
+          evidenceRequired: match.attack.evidenceRequired || []
+        })),
+      confidence: classificationResult.confidence,
       timestamp: new Date()
     };
+    
+    // Use trust classifier to determine methodology
+    const trustResult = await this.trustClassifier.classify({
+      target: context.target,
+      input: context.description || '',
+      attacks: intent.matchedAttacks
+    });
 
     return {
       intent,
-      suggestedMethodology: 'comprehensive', // Always run comprehensive tests
-      estimatedDuration: 3600000, // 60 minutes for full test suite
-      requiresHITL: false
+      suggestedMethodology: trustResult.methodology,
+      estimatedDuration: intent.matchedAttacks.reduce((sum, a) => sum + a.tools[0].estimatedDuration, 0),
+      requiresHITL: trustResult.requiresHITL || classificationResult.matchedAttacks.some(m => m.attack.requiresAuth)
     };
+    } catch (error) {
+      logger.error('Failed to classify intent', { 
+        error: error instanceof Error ? error.message : 'Unknown error',
+        workflowId: context.workflowId
+      });
+      
+      // Send error update to frontend
+      this.emit('workflow:error', {
+        workflowId: context.workflowId,
+        error: error instanceof Error ? error.message : 'Failed to classify intent',
+        phase: 'classification'
+      });
+      
+      throw error;
+    }
   }
 
   /**
@@ -226,58 +310,55 @@ export class MCPServer extends EventEmitter {
     classification: ClassificationResult,
     context: MCPContext
   ): Promise<ViableAttacks> {
-    // This is a simplified mock - actual implementation will use pgvector
-    const enrichedAttacks = classification.intent.matchedAttacks.map(attack => ({
-      attackId: attack.attackId,
-      attackName: attack.attackName,
-      description: attack.description,
-      priority: attack.tools[0].priority as 'critical' | 'standard' | 'low',
-      confidence: attack.similarity,
-      historicalSuccess: 0.75,
-      estimatedDuration: attack.tools[0].estimatedDuration,
-      tools: [{
-        name: attack.tools[0].name,
-        command: attack.tools[0].command,
-        arguments: { target: context.target },
-        timeout: attack.tools[0].estimatedDuration,
-        retryCount: 2,
-        containerImage: tools.find(t => t.name === attack.attackId)?.containerImage
-      }],
-      tsc: attack.tsc,
-      cc: attack.cc,
-      requiresAuth: attack.requiresAuth,
-      progressive: attack.progressive,
-      evidenceRequired: attack.evidenceRequired
-    } as EnrichedAttack));
-
-    const critical = enrichedAttacks.filter(a => a.priority === 'critical');
-    const standard = enrichedAttacks.filter(a => a.priority === 'standard');
-    const lowPriority = enrichedAttacks.filter(a => a.priority === 'low');
-    const requiresAuth = enrichedAttacks.filter(a => a.requiresAuth);
-
-    return {
-      workflowId: context.workflowId || uuidv4(),
-      critical,
-      standard,
-      lowPriority,
-      totalCount: enrichedAttacks.length,
-      requiresAuth,
-      metadata: {
-        enrichmentTimestamp: new Date(),
-        historicalDataUsed: false,
-        embeddingSimilarityThreshold: 0.8,
-        confidenceThreshold: 0.6,
-        totalAttacksConsidered: tools.length,
-        filteredCount: enrichedAttacks.length,
-        reasoning: ['Mock enrichment - actual implementation will use pgvector']
+    logger.info('Enriching context with AI', { 
+      workflowId: context.workflowId,
+      attackCount: classification.intent.matchedAttacks.length 
+    });
+    
+    // Use the actual AI context enrichment layer
+    const enrichmentResult = await this.contextEnrichment.enrich({
+      workflowId: context.workflowId,
+      target: context.target,
+      scope: context.scope || 'comprehensive',
+      intent: classification.intent,
+      methodology: classification.suggestedMethodology,
+      auth: context.auth
+    });
+    
+    // Check for HITL requirements
+    if (enrichmentResult.requiresHITL) {
+      const hitlDecision = await this.hitlReview.requestApproval({
+        workflowId: enrichmentResult.workflowId,
+        criticalAttacks: enrichmentResult.critical,
+        reasons: enrichmentResult.hitlReasons || []
+      });
+      
+      if (!hitlDecision.approved) {
+        logger.warn('HITL review rejected workflow', { workflowId: context.workflowId });
+        throw new Error('Workflow rejected by HITL review');
       }
-    };
+      
+      // Apply any modifications from HITL review
+      if (hitlDecision.modifications) {
+        enrichmentResult.critical = hitlDecision.modifications.critical || enrichmentResult.critical;
+        enrichmentResult.standard = hitlDecision.modifications.standard || enrichmentResult.standard;
+      }
+    }
+    
+    return enrichmentResult;
   }
 
   /**
    * Create execution plan from viable attacks
    */
   private createExecutionPlan(viableAttacks: ViableAttacks): AttackExecutionPlan {
+    logger.info('Creating execution plan', {
+      critical: viableAttacks.critical.length,
+      standard: viableAttacks.standard.length,
+      lowPriority: viableAttacks.lowPriority.length,
+      requiresAuth: viableAttacks.requiresAuth.length
+    });
+    
     const phases = [];
     
     // Phase 1: Non-auth attacks
@@ -285,6 +366,11 @@ export class MCPServer extends EventEmitter {
       ...viableAttacks.critical.filter(a => !a.requiresAuth),
       ...viableAttacks.standard.filter(a => !a.requiresAuth)
     ];
+    
+    logger.info('Non-auth attacks for phase 1', {
+      count: nonAuthAttacks.length,
+      attacks: nonAuthAttacks.map(a => ({ id: a.attackId, name: a.attackName }))
+    });
     
     if (nonAuthAttacks.length > 0) {
       phases.push({
@@ -342,12 +428,26 @@ export class MCPServer extends EventEmitter {
     workflowId: string,
     signal: AbortSignal
   ): Promise<TestResult[]> {
+    logger.info('Starting attack execution', {
+      workflowId,
+      totalPhases: plan.executionOrder.length,
+      totalAttacks: plan.executionOrder.reduce((sum, p) => sum + p.attacks.length, 0)
+    });
+    
     const results: TestResult[] = [];
 
     for (const phase of plan.executionOrder) {
       if (signal.aborted) {
+        logger.warn('Execution aborted', { workflowId, phase: phase.phase });
         break;
       }
+
+      logger.info('Starting phase execution', {
+        workflowId,
+        phase: phase.phase,
+        attackCount: phase.attacks.length,
+        attacks: phase.attacks
+      });
 
       this.emit('workflow:phase:start', { workflowId, phase: phase.phase });
 
@@ -358,6 +458,13 @@ export class MCPServer extends EventEmitter {
             ...plan.viableAttacks.standard,
             ...plan.viableAttacks.lowPriority
           ].find(a => a.attackId === attackId);
+          
+          logger.info('Executing attack', {
+            workflowId,
+            attackId,
+            attackName: attack?.attackName,
+            found: !!attack
+          });
 
           if (!attack || signal.aborted) {
             return null;
@@ -366,8 +473,44 @@ export class MCPServer extends EventEmitter {
           return this.semaphore.withLock(async () => {
             if (signal.aborted) return null;
 
-            const tool = tools.find(t => t.name === attack.attackId);
-            if (!tool) return null;
+            // Map attack IDs to available tools
+            const toolMapping: Record<string, string> = {
+              // Original mappings
+              'ssrf': 'api-security-scan',
+              'csrf': 'xss-detection',
+              'security-misconfig': 'ssl-tls-analysis',
+              'auth-failures': 'authentication-brute-force',
+              'sql-injection': 'blind-sql-injection',
+              'xss': 'xss-detection',
+              
+              // Added missing mappings for comprehensive testing
+              'broken-access-control': 'api-security-scan',
+              'crypto-failures': 'ssl-tls-analysis',
+              'blind-sql-injection': 'blind-sql-injection',
+              'xpath-injection': 'blind-sql-injection',
+              'insecure-design': 'api-security-scan',
+              'vulnerable-components': 'dependency-check',
+              'integrity-failures': 'api-security-scan',
+              'logging-failures': 'api-security-scan',
+              'clickjacking': 'xss-detection',
+              'parameter-tampering': 'api-security-scan',
+              'cors-misconfig': 'api-security-scan',
+              'port-scanning': 'nmap',
+              'ip-spoofing': 'api-security-scan',
+              
+              // Enumeration and discovery
+              'subdomain-enumeration': 'subdomain-scanner',
+              'directory-traversal': 'directory-scanner',
+              'api-discovery': 'api-security-scan',
+              'jwt-testing': 'jwt-scanner'
+            };
+            
+            const toolName = toolMapping[attack.attackId] || attack.attackId;
+            const tool = tools.find(t => t.name === toolName);
+            if (!tool) {
+              logger.warn('No tool found for attack', { attackId: attack.attackId, toolName });
+              return null;
+            }
 
             return this.handleToolCall(
               tool.name,

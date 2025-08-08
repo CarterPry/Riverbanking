@@ -1,0 +1,7 @@
+{
+  "target": "sweetspotgov.com",
+  "userIntent": "Just find all subdomains of sweetspotgov.com. Nothing else.",
+  "constraints": {
+    "environment": "development"
+  }
+}

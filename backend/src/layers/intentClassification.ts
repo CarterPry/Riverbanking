@@ -31,44 +31,115 @@ export class IntentClassifier {
   constructor(embeddingService: EmbeddingService) {
     this.embeddingService = embeddingService;
     this.attackEmbeddings = new Map();
-    this.initializeAttackEmbeddings();
+  }
+  
+  async initialize(): Promise<void> {
+    logger.info('Initializing intent classifier');
+    await this.initializeAttackEmbeddings();
   }
   
   /**
    * Initialize attack embeddings from precomputed values or generate them
    */
   private async initializeAttackEmbeddings() {
+    // First, load all precomputed embeddings
+    let loadedCount = 0;
     for (const attack of attacks) {
       if (attackEmbeddings[attack.id]) {
         this.attackEmbeddings.set(attack.id, attackEmbeddings[attack.id]);
-      } else {
-        // Generate embedding for attack description
-        const embedding = await this.embeddingService.getEmbedding(
-          `${attack.name} ${attack.description}`
-        );
-        this.attackEmbeddings.set(attack.id, embedding);
+        loadedCount++;
       }
     }
+    
+    logger.info('Loaded precomputed attack embeddings', { 
+      loaded: loadedCount, 
+      total: attacks.length 
+    });
+    
+    // Check if we have all required embeddings
+    if (loadedCount < attacks.length) {
+      const missing = attacks
+        .filter(attack => !this.attackEmbeddings.has(attack.id))
+        .map(attack => attack.id);
+      
+      logger.error('Missing embeddings for attacks', { 
+        missing, 
+        loadedCount, 
+        totalAttacks: attacks.length 
+      });
+      
+      throw new Error(
+        `Missing embeddings for ${missing.length} attacks: ${missing.join(', ')}. ` +
+        `Please run 'node scripts/generate-embeddings-direct.js' to generate all embeddings.`
+      );
+    }
+    
     logger.info('Attack embeddings initialized', { count: this.attackEmbeddings.size });
   }
   
   /**
    * Classify user input and match to relevant attacks
    */
-  async classify(input: string): Promise<IntentClassificationResult> {
-    logger.debug('Classifying input', { inputLength: input.length });
+  async classify(input: string, workflowId?: string): Promise<IntentClassificationResult> {
+    logger.info('Starting intent classification', { inputLength: input.length, workflowId });
+    
+    // Emit progress event
+    if (workflowId) {
+      process.emit('workflow:classification:progress' as any, {
+        workflowId,
+        message: 'Analyzing your security test request...',
+        phase: 'classification',
+        percent: 10
+      });
+    }
     
     // Build structured prompt for classification
     const prompt = promptBuilder.build('classification', input);
+    logger.debug('Built classification prompt');
     
     // Generate embedding for input with prompt
+    logger.info('Generating embedding for user input...');
+    if (workflowId) {
+      process.emit('workflow:classification:progress' as any, {
+        workflowId,
+        message: 'Processing your request with AI...',
+        phase: 'classification',
+        percent: 30
+      });
+    }
+    
     const inputEmbedding = await this.embeddingService.getEmbedding(prompt);
+    logger.info('Generated input embedding successfully');
+    
+    if (workflowId) {
+      process.emit('workflow:classification:progress' as any, {
+        workflowId,
+        message: 'Matching your request to security tests...',
+        phase: 'classification',
+        percent: 60
+      });
+    }
     
     // Extract entities from input
     const extractedEntities = this.extractEntities(input);
     
     // Calculate similarities with all attacks
     const attackMatches: AttackMatch[] = [];
+    
+    logger.info('Analyzing security test matches', { 
+      totalAttacks: attacks.length,
+      userInput: input.substring(0, 100) + '...'
+    });
+    
+    // Emit progress for similarity calculation
+    if (workflowId) {
+      process.emit('workflow:classification:progress' as any, {
+        workflowId,
+        message: `Comparing your request against ${attacks.length} security test types...`,
+        phase: 'classification',
+        percent: 70
+      });
+    }
     
     for (const attack of attacks) {
       const attackEmbedding = this.attackEmbeddings.get(attack.id);
@@ -78,22 +149,81 @@ export class IntentClassifier {
       
       // Apply boost if attack type keywords are mentioned
       let adjustedSimilarity = similarity;
-      if (this.containsAttackKeywords(input, attack)) {
+      const hasKeywords = this.containsAttackKeywords(input, attack);
+      if (hasKeywords) {
         adjustedSimilarity = Math.min(1.0, similarity * 1.2);
+        logger.debug('Keyword boost applied', {
+          attack: attack.name,
+          originalSimilarity: similarity.toFixed(4),
+          boostedSimilarity: adjustedSimilarity.toFixed(4)
+        });
       }
+      
+      // Log all similarities for transparency
+      logger.debug('Attack similarity score', {
+        attackId: attack.id,
+        attackName: attack.name,
+        similarity: similarity.toFixed(4),
+        adjustedSimilarity: adjustedSimilarity.toFixed(4),
+        meetsThreshold: adjustedSimilarity > 0.6
+      });
       
       // Filter by threshold
       if (adjustedSimilarity > 0.6) {
+        const relevance = this.calculateRelevance(adjustedSimilarity);
         attackMatches.push({
           attack,
           similarity: adjustedSimilarity,
-          relevance: this.calculateRelevance(adjustedSimilarity)
+          relevance
         });
+        
+        // Emit match found
+        if (workflowId) {
+          process.emit('workflow:classification:progress' as any, {
+            workflowId,
+            message: `Found relevant test: ${attack.name} (${relevance} relevance, ${(adjustedSimilarity * 100).toFixed(1)}% match)`,
+            phase: 'classification',
+            percent: 75 + (attackMatches.length * 2)
+          });
+        }
       }
     }
     
     // Sort by similarity
     attackMatches.sort((a, b) => b.similarity - a.similarity);
+    
+    // Log top matches
+    if (attackMatches.length > 0) {
+      logger.info('Top security test matches found', {
+        totalMatches: attackMatches.length,
+        topMatches: attackMatches.slice(0, 5).map(m => ({
+          name: m.attack.name,
+          similarity: (m.similarity * 100).toFixed(1) + '%',
+          relevance: m.relevance
+        }))
+      });
+      
+      // Emit summary
+      if (workflowId) {
+        process.emit('workflow:classification:progress' as any, {
+          workflowId,
+          message: `Identified ${attackMatches.length} relevant security tests. Top match: ${attackMatches[0].attack.name} (${(attackMatches[0].similarity * 100).toFixed(1)}% confidence)`,
+          phase: 'classification',
+          percent: 90
+        });
+      }
+    } else {
+      logger.warn('No matching security tests found', { input: input.substring(0, 100) });
+      
+      if (workflowId) {
+        process.emit('workflow:classification:progress' as any, {
+          workflowId,
+          message: 'No specific security tests matched your request. Using general security assessment.',
+          phase: 'classification',
+          percent: 90
+        });
+      }
+    }
     
     // Determine intent based on input patterns
     const intent = this.determineIntent(input, attackMatches);
@@ -101,10 +231,24 @@ export class IntentClassifier {
     
     logger.info('Classification complete', {
       intent,
-      confidence,
+      confidence: (confidence * 100).toFixed(1) + '%',
       matchedAttacks: attackMatches.length,
-      topMatch: attackMatches[0]?.attack.name
+      topMatch: attackMatches[0]?.attack.name,
+      extractedEntities: {
+        targets: extractedEntities.targets,
+        attackTypes: extractedEntities.attackTypes,
+        scope: extractedEntities.scope
+      }
     });
+    
+    if (workflowId) {
+      process.emit('workflow:classification:progress' as any, {
+        workflowId,
+        message: 'Classification complete. Moving to context enrichment...',
+        phase: 'classification',
+        percent: 100
+      });
+    }
     
     return {
       intent,

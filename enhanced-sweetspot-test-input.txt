@@ -1,0 +1,59 @@
+Perform comprehensive penetration testing and security assessment on https://console.sweetspotgov.com and all associated infrastructure:
+
+TARGET SCOPE:
+- Primary target: https://console.sweetspotgov.com
+- Test ALL subdomains: api.*, admin.*, portal.*, secure.*, auth.*, internal.*, dev.*, test.*, staging.*
+- Include OAuth endpoints and LinkedIn integration
+- Test both authenticated and unauthenticated access
+
+SQL INJECTION TESTING:
+- Test all forms, especially login at /auth/login
+- Inject into all parameters, cookies, and headers
+- Use time-based blind SQL injection techniques
+- Test union-based attacks for data extraction
+- Check for second-order SQL injection
+- Test stored procedures and dynamic queries
+
+JWT TOKEN SECURITY:
+- Extract and analyze all JWT tokens
+- Test algorithm confusion attacks (RS256 to HS256)
+- Attempt none algorithm bypass
+- Brute force weak secrets
+- Manipulate claims and test authorization
+- Check token expiration and refresh mechanisms
+- Test for token leakage in responses or logs
+
+API SECURITY TESTING:
+- Enumerate all API endpoints (/api/, /api/v1/, /graphql)
+- Test for broken object level authorization (IDOR)
+- Check for excessive data exposure
+- Test rate limiting and attempt bypass
+- Verify CORS configuration
+- Test for API key leakage
+- Check for debug endpoints
+
+DIRECTORY AND FILE DISCOVERY:
+- Scan for sensitive files: .git/, .env, config files
+- Check backup files and directories
+- Look for exposed credentials
+- Test directory traversal vulnerabilities
+- Check for source code disclosure
+- Find hidden admin panels
+
+AUTHENTICATION TESTING:
+- Test login bypass techniques
+- Check password reset vulnerabilities
+- Test session management
+- Verify OAuth implementation security
+- Test for user enumeration
+- Check account lockout policies
+
+INFORMATION GATHERING:
+- Extract version information
+- Identify technology stack
+- Map application structure
+- Find information in error messages
+- Check HTML comments and JavaScript
+- Identify third-party integrations
+
+This is a government system containing CUI data - ensure comprehensive testing while maintaining system integrity.

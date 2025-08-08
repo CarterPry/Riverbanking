@@ -1,0 +1,39 @@
+{
+  "workflowId": "test-1754528747-88739",
+  "timestamp": "2025-08-07T01:05:57Z",
+  "request": {
+  "target": "https://sweetspotgov.com",
+  "scope": "/*",
+  "description": "I want you to test against all subdomains and dir's. Test all access, stuff like sql injection, sending JWT tokens, catching any leaky api's stuff like this.",
+  "testType": "comprehensive",
+  "options": {
+    "includeRecon": true,
+    "includeSubdomains": true,
+    "testAuthentication": true,
+    "testAPIs": true,
+    "verboseLogging": true,
+    "captureAIReasoning": true,
+    "maxInitialTests": 5
+  }
+},
+  "initialResponse": <!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+<pre>Cannot POST /api/workflows/run</pre>
+</body>
+</html>},
+  "statusResponse": <!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+<pre>Cannot GET /api/workflows/test-1754528747-88739/status</pre>
+</body>
+</html>}
+}

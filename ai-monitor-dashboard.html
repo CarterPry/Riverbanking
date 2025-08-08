@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Communication Monitor Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #1a1a2e;
+            color: #eee;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #4fbdba;
+            margin-bottom: 30px;
+        }
+        
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+        }
+        
+        .panel {
+            background-color: #16213e;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+        
+        .panel h2 {
+            color: #7ec8e3;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+        }
+        
+        .log-entry {
+            background-color: #0f3460;
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            word-wrap: break-word;
+        }
+        
+        .log-entry.request {
+            border-left: 4px solid #4fbdba;
+        }
+        
+        .log-entry.response {
+            border-left: 4px solid #7ec8e3;
+        }
+        
+        .log-entry.error {
+            border-left: 4px solid #e94560;
+            background-color: #3e1929;
+        }
+        
+        .log-entry.classification {
+            border-left: 4px solid #f39c12;
+        }
+        
+        .timestamp {
+            color: #999;
+            font-size: 0.8em;
+        }
+        
+        .controls {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        
+        button {
+            background-color: #4fbdba;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            margin: 0 5px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1em;
+        }
+        
+        button:hover {
+            background-color: #7ec8e3;
+        }
+        
+        button:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+        }
+        
+        .status {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 5px;
+            margin-left: 10px;
+        }
+        
+        .status.connected {
+            background-color: #27ae60;
+        }
+        
+        .status.disconnected {
+            background-color: #e74c3c;
+        }
+        
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .metric {
+            background-color: #0f3460;
+            padding: 15px;
+            border-radius: 5px;
+            text-align: center;
+        }
+        
+        .metric-value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #4fbdba;
+        }
+        
+        .metric-label {
+            font-size: 0.9em;
+            color: #999;
+            margin-top: 5px;
+        }
+        
+        .filter-controls {
+            margin-bottom: 20px;
+        }
+        
+        .filter-controls label {
+            margin-right: 15px;
+        }
+        
+        .filter-controls input[type="checkbox"] {
+            margin-right: 5px;
+        }
+        
+        #logContainer, #classificationContainer, #embeddingContainer {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .json-preview {
+            background-color: #000;
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 10px;
+            overflow-x: auto;
+        }
+        
+        pre {
+            margin: 0;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>AI Communication Monitor Dashboard</h1>
+        
+        <div class="controls">
+            <button id="connectBtn" onclick="toggleConnection()">Connect to Backend</button>
+            <button id="clearBtn" onclick="clearLogs()">Clear Logs</button>
+            <button id="exportBtn" onclick="exportLogs()">Export Logs</button>
+            <span id="status" class="status disconnected">Disconnected</span>
+        </div>
+        
+        <div class="filter-controls">
+            <label><input type="checkbox" id="filterRequests" checked> Show Requests</label>
+            <label><input type="checkbox" id="filterResponses" checked> Show Responses</label>
+            <label><input type="checkbox" id="filterErrors" checked> Show Errors</label>
+            <label><input type="checkbox" id="filterClassifications" checked> Show Classifications</label>
+        </div>
+        
+        <div class="metrics">
+            <div class="metric">
+                <div class="metric-value" id="totalRequests">0</div>
+                <div class="metric-label">Total Requests</div>
+            </div>
+            <div class="metric">
+                <div class="metric-value" id="totalEmbeddings">0</div>
+                <div class="metric-label">Embeddings Generated</div>
+            </div>
+            <div class="metric">
+                <div class="metric-value" id="totalClassifications">0</div>
+                <div class="metric-label">Classifications</div>
+            </div>
+            <div class="metric">
+                <div class="metric-value" id="avgResponseTime">0ms</div>
+                <div class="metric-label">Avg Response Time</div>
+            </div>
+        </div>
+        
+        <div class="dashboard">
+            <div class="panel">
+                <h2>AI Communication Stream</h2>
+                <div id="logContainer"></div>
+            </div>
+            
+            <div class="panel">
+                <h2>Intent Classifications</h2>
+                <div id="classificationContainer"></div>
+            </div>
+            
+            <div class="panel">
+                <h2>Embeddings & Similarity</h2>
+                <div id="embeddingContainer"></div>
+            </div>
+            
+            <div class="panel">
+                <h2>Active Workflows</h2>
+                <div id="workflowContainer"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let logs = [];
+        let metrics = {
+            totalRequests: 0,
+            totalEmbeddings: 0,
+            totalClassifications: 0,
+            responseTimes: []
+        };
+        
+        function toggleConnection() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                disconnect();
+            } else {
+                connect();
+            }
+        }
+        
+        function connect() {
+            const wsUrl = 'ws://localhost:3000/ws';
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = () => {
+                console.log('Connected to backend');
+                document.getElementById('status').className = 'status connected';
+                document.getElementById('status').textContent = 'Connected';
+                document.getElementById('connectBtn').textContent = 'Disconnect';
+                
+                // Subscribe to AI events
+                ws.send(JSON.stringify({
+                    type: 'subscribe',
+                    events: ['ai_request', 'ai_response', 'embedding_generation', 'classification', 'workflow_update']
+                }));
+            };
+            
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleMessage(data);
+                } catch (error) {
+                    console.error('Failed to parse message:', error);
+                }
+            };
+            
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                addLogEntry('error', 'WebSocket connection error', { error: error.message });
+            };
+            
+            ws.onclose = () => {
+                console.log('Disconnected from backend');
+                document.getElementById('status').className = 'status disconnected';
+                document.getElementById('status').textContent = 'Disconnected';
+                document.getElementById('connectBtn').textContent = 'Connect to Backend';
+            };
+        }
+        
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+        
+        function handleMessage(data) {
+            const timestamp = new Date().toLocaleTimeString();
+            
+            switch (data.type || data.event) {
+                case 'ai_request':
+                    if (document.getElementById('filterRequests').checked) {
+                        addLogEntry('request', `AI Request: ${data.component || 'Unknown'}`, data, timestamp);
+                    }
+                    metrics.totalRequests++;
+                    updateMetrics();
+                    break;
+                    
+                case 'ai_response':
+                    if (document.getElementById('filterResponses').checked) {
+                        addLogEntry('response', `AI Response: ${data.component || 'Unknown'}`, data, timestamp);
+                    }
+                    if (data.duration) {
+                        metrics.responseTimes.push(data.duration);
+                    }
+                    updateMetrics();
+                    break;
+                    
+                case 'embedding_generation':
+                    metrics.totalEmbeddings++;
+                    addEmbeddingEntry(data, timestamp);
+                    updateMetrics();
+                    break;
+                    
+                case 'classification':
+                case 'workflow:classification:progress':
+                    if (document.getElementById('filterClassifications').checked) {
+                        metrics.totalClassifications++;
+                        addClassificationEntry(data, timestamp);
+                        updateMetrics();
+                    }
+                    break;
+                    
+                case 'workflow_update':
+                case 'workflow:progress':
+                    updateWorkflowDisplay(data);
+                    break;
+                    
+                case 'error':
+                case 'ai_error':
+                    if (document.getElementById('filterErrors').checked) {
+                        addLogEntry('error', `Error: ${data.message || 'Unknown error'}`, data, timestamp);
+                    }
+                    break;
+            }
+            
+            // Store log for export
+            logs.push({ timestamp, data });
+        }
+        
+        function addLogEntry(type, message, data, timestamp) {
+            const container = document.getElementById('logContainer');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            
+            let content = `<div class="timestamp">${timestamp}</div><div>${message}</div>`;
+            
+            if (data && (data.request || data.response || data.input || data.output)) {
+                const preview = data.request || data.response || data.input || data.output;
+                content += `<div class="json-preview"><pre>${JSON.stringify(preview, null, 2)}</pre></div>`;
+            }
+            
+            entry.innerHTML = content;
+            container.insertBefore(entry, container.firstChild);
+            
+            // Keep only last 50 entries
+            while (container.children.length > 50) {
+                container.removeChild(container.lastChild);
+            }
+        }
+        
+        function addClassificationEntry(data, timestamp) {
+            const container = document.getElementById('classificationContainer');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry classification';
+            
+            let content = `<div class="timestamp">${timestamp}</div>`;
+            
+            if (data.message) {
+                content += `<div>${data.message}</div>`;
+            }
+            
+            if (data.intent || data.confidence || data.topMatch) {
+                content += `<div>Intent: ${data.intent || 'N/A'} | Confidence: ${data.confidence || 'N/A'} | Top Match: ${data.topMatch || 'None'}</div>`;
+            }
+            
+            entry.innerHTML = content;
+            container.insertBefore(entry, container.firstChild);
+            
+            // Keep only last 20 entries
+            while (container.children.length > 20) {
+                container.removeChild(container.lastChild);
+            }
+        }
+        
+        function addEmbeddingEntry(data, timestamp) {
+            const container = document.getElementById('embeddingContainer');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            
+            let content = `<div class="timestamp">${timestamp}</div>`;
+            content += `<div>Embedding: ${data.model || 'Unknown model'} | Cached: ${data.cached || false} | Duration: ${data.duration || 'N/A'}ms</div>`;
+            
+            if (data.text) {
+                content += `<div>Text: ${data.text.substring(0, 100)}...</div>`;
+            }
+            
+            entry.innerHTML = content;
+            container.insertBefore(entry, container.firstChild);
+            
+            // Keep only last 20 entries
+            while (container.children.length > 20) {
+                container.removeChild(container.lastChild);
+            }
+        }
+        
+        function updateWorkflowDisplay(data) {
+            const container = document.getElementById('workflowContainer');
+            let workflowDiv = document.getElementById(`workflow-${data.workflowId}`);
+            
+            if (!workflowDiv) {
+                workflowDiv = document.createElement('div');
+                workflowDiv.id = `workflow-${data.workflowId}`;
+                workflowDiv.className = 'log-entry';
+                container.appendChild(workflowDiv);
+            }
+            
+            workflowDiv.innerHTML = `
+                <div>Workflow: ${data.workflowId}</div>
+                <div>Status: ${data.status || 'running'} | Phase: ${data.phase || 'N/A'}</div>
+                <div>Progress: ${data.percent || 0}%</div>
+                ${data.message ? `<div>Message: ${data.message}</div>` : ''}
+            `;
+        }
+        
+        function updateMetrics() {
+            document.getElementById('totalRequests').textContent = metrics.totalRequests;
+            document.getElementById('totalEmbeddings').textContent = metrics.totalEmbeddings;
+            document.getElementById('totalClassifications').textContent = metrics.totalClassifications;
+            
+            if (metrics.responseTimes.length > 0) {
+                const avg = metrics.responseTimes.reduce((a, b) => a + b, 0) / metrics.responseTimes.length;
+                document.getElementById('avgResponseTime').textContent = `${avg.toFixed(0)}ms`;
+            }
+        }
+        
+        function clearLogs() {
+            document.getElementById('logContainer').innerHTML = '';
+            document.getElementById('classificationContainer').innerHTML = '';
+            document.getElementById('embeddingContainer').innerHTML = '';
+            document.getElementById('workflowContainer').innerHTML = '';
+            logs = [];
+        }
+        
+        function exportLogs() {
+            const dataStr = JSON.stringify(logs, null, 2);
+            const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+            
+            const exportFileDefaultName = `ai-logs-${new Date().toISOString()}.json`;
+            
+            const linkElement = document.createElement('a');
+            linkElement.setAttribute('href', dataUri);
+            linkElement.setAttribute('download', exportFileDefaultName);
+            linkElement.click();
+        }
+        
+        // Auto-connect on load
+        window.onload = () => {
+            setTimeout(connect, 1000);
+        };
+    </script>
+</body>
+</html>

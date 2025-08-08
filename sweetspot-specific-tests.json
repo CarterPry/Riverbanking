@@ -1,0 +1,165 @@
+{
+  "testCases": [
+    {
+      "name": "Subdomain Enumeration and Testing",
+      "targets": [
+        "https://console.sweetspotgov.com",
+        "https://api.sweetspotgov.com",
+        "https://admin.sweetspotgov.com",
+        "https://portal.sweetspotgov.com",
+        "https://secure.sweetspotgov.com",
+        "https://auth.sweetspotgov.com",
+        "https://login.sweetspotgov.com",
+        "https://dashboard.sweetspotgov.com",
+        "https://test.sweetspotgov.com",
+        "https://dev.sweetspotgov.com",
+        "https://staging.sweetspotgov.com",
+        "https://uat.sweetspotgov.com",
+        "https://internal.sweetspotgov.com"
+      ],
+      "description": "Test all potential subdomains for vulnerabilities"
+    },
+    {
+      "name": "Authentication and JWT Testing",
+      "endpoints": [
+        "/auth/login",
+        "/auth/logout",
+        "/auth/refresh",
+        "/auth/validate",
+        "/api/auth/token",
+        "/api/v1/auth",
+        "/oauth/token",
+        "/oauth/authorize"
+      ],
+      "tests": [
+        "JWT algorithm confusion (RS256 to HS256)",
+        "JWT none algorithm bypass",
+        "JWT signature removal",
+        "JWT key confusion",
+        "Weak JWT secret brute force",
+        "JWT expiration bypass",
+        "JWT claims manipulation",
+        "Token leakage in responses",
+        "Session fixation",
+        "Authentication bypass via parameter pollution"
+      ]
+    },
+    {
+      "name": "SQL Injection Comprehensive",
+      "injectionPoints": [
+        "URL parameters",
+        "POST body parameters",
+        "Cookie values",
+        "HTTP headers (User-Agent, Referer, X-Forwarded-For)",
+        "JSON body fields",
+        "XML body fields",
+        "GraphQL queries"
+      ],
+      "payloads": [
+        "' OR '1'='1",
+        "'; DROP TABLE users; --",
+        "' UNION SELECT NULL, username, password FROM users--",
+        "1' AND SLEEP(5)--",
+        "1' AND (SELECT * FROM (SELECT(SLEEP(5)))a)--",
+        "'; WAITFOR DELAY '00:00:05'--",
+        "1' AND extractvalue(1,concat(0x7e,database()))--"
+      ]
+    },
+    {
+      "name": "API Security Testing",
+      "paths": [
+        "/api/",
+        "/api/v1/",
+        "/api/v2/",
+        "/graphql",
+        "/rest/",
+        "/services/",
+        "/data/",
+        "/query/"
+      ],
+      "tests": [
+        "Broken Object Level Authorization (IDOR)",
+        "Broken User Authentication",
+        "Excessive Data Exposure",
+        "Broken Function Level Authorization",
+        "Mass Assignment vulnerabilities",
+        "Security Misconfiguration",
+        "Improper Assets Management",
+        "Insufficient Logging & Monitoring",
+        "API rate limiting bypass",
+        "CORS misconfiguration"
+      ]
+    },
+    {
+      "name": "Directory and File Discovery",
+      "paths": [
+        "/.git/config",
+        "/.env",
+        "/.env.local",
+        "/.env.production",
+        "/config.json",
+        "/package.json",
+        "/composer.json",
+        "/.DS_Store",
+        "/robots.txt",
+        "/sitemap.xml",
+        "/.well-known/security.txt",
+        "/admin/",
+        "/administrator/",
+        "/backup/",
+        "/backups/",
+        "/temp/",
+        "/tmp/",
+        "/uploads/",
+        "/files/",
+        "/private/",
+        "/config/",
+        "/configuration/",
+        "/settings/",
+        "/debug/",
+        "/test/",
+        "/testing/",
+        "/.aws/credentials",
+        "/.ssh/id_rsa",
+        "/web.config",
+        "/.htaccess",
+        "/WEB-INF/web.xml"
+      ]
+    },
+    {
+      "name": "Information Disclosure",
+      "checks": [
+        "Error message information leakage",
+        "Stack traces in responses",
+        "Debug mode detection",
+        "Version disclosure in headers",
+        "Comments in HTML/JS containing sensitive data",
+        "API documentation exposure",
+        "Source code disclosure",
+        "Backup file discovery",
+        "Configuration file exposure"
+      ]
+    },
+    {
+      "name": "LinkedIn OAuth Integration Testing",
+      "description": "Test the 'Continue with LinkedIn' functionality",
+      "tests": [
+        "OAuth redirect manipulation",
+        "State parameter fixation",
+        "Authorization code injection",
+        "Token hijacking",
+        "Scope manipulation",
+        "Account takeover via OAuth"
+      ]
+    }
+  ],
+  "notes": {
+    "systemAccess": "System contains Controlled Unclassified Information (CUI) - test carefully",
+    "authEndpoint": "https://console.sweetspotgov.com/auth/login",
+    "features": [
+      "LinkedIn OAuth integration",
+      "Email/password authentication",
+      "Government system with audit requirements"
+    ]
+  }
+}

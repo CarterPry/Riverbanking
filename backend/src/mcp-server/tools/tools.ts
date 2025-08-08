@@ -23,7 +23,7 @@ export const tools: SecurityTool[] = [
   {
     name: 'blind-sql-injection',
     description: 'Injects SQL to infer data existence through application behavior',
-    command: ['sqlmap', '--url', '{target}', '--batch', '--level=5', '--risk=3', '--technique=B'],
+    command: ['/usr/bin/sqlmap', '-u', '{target}', '--batch', '--level=5', '--risk=3', '--technique=BEUSTQ', '--random-agent', '--tamper=space2comment,charencode', '--threads=10', '--output-dir=/tmp/sqlmap', '--flush-session', '--fresh-queries'],
     attackType: 'Blind SQL Injection',
     tsc: ['Security'],
     cc: ['CC6.1', 'CC7.1'],
@@ -31,12 +31,12 @@ export const tools: SecurityTool[] = [
     progressive: true,
     evidenceRequired: ['logs', 'db_dump', 'request_response'],
     timeout: 300000, // 5 minutes
-    containerImage: 'kalilinux/kali-rolling'
+    containerImage: 'secsi/sqlmap:latest'
   },
   {
     name: 'xss-detection',
     description: 'Tests for Cross-Site Scripting vulnerabilities',
-    command: ['zap-cli', 'active-scan', '--scanners', 'xss', '--url', '{target}'],
+    command: ['sh', '-c', 'cd /tmp && /zap/zap-baseline.py -t {target} -j -m 3 -T 3'],
     attackType: 'Cross-Site Scripting (XSS)',
     tsc: ['Security'],
     cc: ['CC6.1', 'CC7.2'],
@@ -44,12 +44,12 @@ export const tools: SecurityTool[] = [
     progressive: true,
     evidenceRequired: ['vulnerability_report', 'payload_examples'],
     timeout: 180000, // 3 minutes
-    containerImage: 'zaproxy/zap-stable'
+    containerImage: 'zaproxy/zap-stable:latest'
   },
   {
     name: 'clickjacking',
     description: 'Checks for clickjacking vulnerabilities through header analysis',
-    command: ['nikto', '-h', '{target}', '-Plugins', 'headers', '-Format', 'json'],
+    command: ['/usr/bin/nikto', '-h', '{target}', '-Plugins', 'headers', '-Format', 'json', '-output', '/tmp/nikto-report.json'],
     attackType: 'Clickjacking',
     tsc: ['Security'],
     cc: ['CC6.1'],
@@ -57,25 +57,25 @@ export const tools: SecurityTool[] = [
     progressive: false,
     evidenceRequired: ['headers_analysis', 'recommendations'],
     timeout: 120000, // 2 minutes
-    containerImage: 'kalilinux/kali-rolling'
+    containerImage: 'securecodebox/nikto:latest'
   },
   {
     name: 'port-scanning',
     description: 'Comprehensive port scan to identify exposed services',
-    command: ['nmap', '-sS', '-sV', '-O', '-A', '-p-', '{target}', '-oX', 'scan_results.xml'],
+    command: ['nmap', '-sS', '-sV', '-A', '-T4', '--top-ports', '1000', '{target}', '-oX', '/tmp/scan_results.xml'],
     attackType: 'Port Scanning',
     tsc: ['Availability', 'Security'],
     cc: ['CC6.6', 'CC7.1'],
     requiresAuth: false,
     progressive: true,
     evidenceRequired: ['open_ports', 'service_versions', 'os_detection'],
-    timeout: 600000, // 10 minutes
-    containerImage: 'kalilinux/kali-rolling'
+    timeout: 300000, // 5 minutes (reduced scope for faster results)
+    containerImage: 'instrumentisto/nmap:latest'
   },
   {
     name: 'authentication-brute-force',
     description: 'Tests authentication mechanisms for weak credentials',
-    command: ['hydra', '-L', 'users.txt', '-P', 'passwords.txt', '{target}', 'http-post-form', '{login_path}:username=^USER^&password=^PASS^:Invalid'],
+    command: ['sh', '-c', 'apt-get update -qq && apt-get install -qq -y hydra && echo "admin\\ntest" > /tmp/users.txt && echo "password\\n123456" > /tmp/passwords.txt && hydra -L /tmp/users.txt -P /tmp/passwords.txt -f -V -u {target} http-get /'],
     attackType: 'Authentication Brute Force',
     tsc: ['Security', 'Authentication'],
     cc: ['CC6.1', 'CC6.2'],
@@ -127,7 +127,7 @@ export const tools: SecurityTool[] = [
   {
     name: 'ssl-tls-analysis',
     description: 'Analyzes SSL/TLS configuration for security weaknesses',
-    command: ['testssl.sh', '--full', '{target}', '--jsonfile', 'ssl_report.json'],
+    command: ['--jsonfile', 'ssl_report.json', '--severity', 'LOW', '{target}'],
     attackType: 'SSL/TLS Security',
     tsc: ['Security', 'Availability'],
     cc: ['CC6.1', 'CC6.7'],
@@ -140,7 +140,7 @@ export const tools: SecurityTool[] = [
   {
     name: 'api-security-scan',
     description: 'Comprehensive API security testing',
-    command: ['zap-cli', 'openapi', '-f', 'openapi.json', '-u', '{target}', '--format', 'json'],
+    command: ['sh', '-c', 'cd /tmp && /zap/zap-baseline.py -t {target} -j -m 5 -d'],
     attackType: 'API Security',
     tsc: ['Security', 'Data Integrity'],
     cc: ['CC6.1', 'CC7.1', 'CC7.2'],
@@ -148,7 +148,72 @@ export const tools: SecurityTool[] = [
     progressive: true,
     evidenceRequired: ['endpoint_vulnerabilities', 'authentication_issues', 'data_exposure'],
     timeout: 420000, // 7 minutes
-    containerImage: 'zaproxy/zap-stable'
+    containerImage: 'zaproxy/zap-stable:latest'
+  },
+  {
+    name: 'subdomain-scanner',
+    description: 'Enumerate subdomains for the target domain',
+    command: ['sh', '-c', 'echo "{domain}" | subfinder -silent'],
+    attackType: 'Subdomain Enumeration',
+    tsc: ['Security'],
+    cc: ['CC6.6', 'CC7.1'],
+    requiresAuth: false,
+    progressive: true,
+    evidenceRequired: ['discovered_subdomains', 'dns_records'],
+    timeout: 300000, // 5 minutes
+    containerImage: 'projectdiscovery/subfinder:latest'
+  },
+  {
+    name: 'directory-scanner',
+    description: 'Discover hidden directories and files',
+    command: ['gobuster', 'dir', '-u', '{target}', '-w', '/usr/share/wordlists/dirb/common.txt', '-x', 'php,html,js,txt,json,xml,bak,old,log,sql,zip,tar,gz', '-o', '/tmp/directories.txt', '-q'],
+    attackType: 'Directory Traversal',
+    tsc: ['Security'],
+    cc: ['CC6.1', 'CC6.6'],
+    requiresAuth: false,
+    progressive: true,
+    evidenceRequired: ['discovered_paths', 'sensitive_files'],
+    timeout: 300000, // 5 minutes
+    containerImage: 'kalilinux/kali-rolling'
+  },
+  {
+    name: 'jwt-scanner',
+    description: 'Test JWT token vulnerabilities',
+    command: ['jwt_tool', '{token}', '-M', 'at', '-t', '{target}', '-rc', '/tmp/jwt-config.json'],
+    attackType: 'JWT Token Security',
+    tsc: ['Security', 'Authentication'],
+    cc: ['CC6.1', 'CC6.2'],
+    requiresAuth: true,
+    progressive: false,
+    evidenceRequired: ['vulnerable_algorithms', 'token_manipulation', 'secret_weakness'],
+    timeout: 180000, // 3 minutes
+    containerImage: 'ticarpi/jwt_tool:latest'
+  },
+  {
+    name: 'dependency-check',
+    description: 'Scan for vulnerable dependencies',
+    command: ['dependency-check.sh', '--project', 'target-scan', '--scan', '{target}', '--format', 'JSON', '--out', '/tmp/dependency-report.json'],
+    attackType: 'Vulnerable Components',
+    tsc: ['Security'],
+    cc: ['CC7.1', 'CC8.1'],
+    requiresAuth: false,
+    progressive: false,
+    evidenceRequired: ['vulnerable_libraries', 'cve_list', 'severity_scores'],
+    timeout: 300000, // 5 minutes
+    containerImage: 'owasp/dependency-check:latest'
+  },
+  {
+    name: 'nmap',
+    description: 'Alias for port-scanning tool',
+    command: ['nmap', '-sS', '-sV', '-A', '-T4', '--top-ports', '1000', '{target}', '-oX', '/tmp/scan_results.xml'],
+    attackType: 'Network Scanning',
+    tsc: ['Availability', 'Security'],
+    cc: ['CC6.6', 'CC7.1'],
+    requiresAuth: false,
+    progressive: true,
+    evidenceRequired: ['open_ports', 'service_versions', 'os_detection'],
+    timeout: 300000, // 5 minutes
+    containerImage: 'instrumentisto/nmap:latest'
   }
 ];
 
@@ -184,6 +249,17 @@ export function getProgressiveTools(): SecurityTool[] {
  * Prepare tool command with actual values
  */
 export function prepareToolCommand(tool: SecurityTool, params: Record<string, string>): string[] {
+  // Extract domain from URL for subdomain scanner
+  if (tool.name === 'subdomain-scanner' && params.target && !params.domain) {
+    try {
+      const url = new URL(params.target);
+      params.domain = url.hostname;
+    } catch (e) {
+      // If not a valid URL, assume it's already a domain
+      params.domain = params.target;
+    }
+  }
+  
   return tool.command.map(arg => {
     // Replace placeholders with actual values
     return arg.replace(/{(\w+)}/g, (match, key) => {

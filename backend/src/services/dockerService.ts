@@ -1,5 +1,5 @@
 import Docker from 'dockerode';
-import { Readable } from 'stream';
+import { Readable, Writable } from 'stream';
 import { createLogger } from '../utils/logger.js';
 import { EventEmitter } from 'events';
 
@@ -8,6 +8,8 @@ const logger = createLogger('DockerService');
 export interface ContainerConfig {
   image: string;
   command: string[];
+  name?: string;
+  workflowId?: string;
   volumes?: Record<string, string>;
   workingDir?: string;
   environment?: Record<string, string>;
@@ -160,6 +162,7 @@ export class DockerService extends EventEmitter {
   ): Promise<ContainerResult> {
     const output: string[] = [];
     let exitCode = 0;
+    const startTime = Date.now();
 
     // Attach to container streams
     const stream = await container.attach({ 
@@ -173,6 +176,31 @@ export class DockerService extends EventEmitter {
     const timeoutPromise = new Promise<never>((_, reject) => {
       setTimeout(() => reject(new Error('Container execution timeout')), timeout);
     });
+
+    // Emit progress updates
+    const progressInterval = setInterval(async () => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(Math.round((elapsed / timeout) * 100), 95);
+      
+      // Extract progress from container output
+      const lastOutput = output.slice(-10).join('\n');
+      let toolProgress = null;
+      
+      // Check for tool-specific progress indicators
+      if (lastOutput.includes('%')) {
+        const match = lastOutput.match(/(\d+)%/);
+        if (match) toolProgress = parseInt(match[1]);
+      }
+      
+      // Emit progress event
+      process.emit('workflow:tool:progress' as any, {
+        containerId: config.name,
+        workflowId: config.workflowId,
+        progress: toolProgress || progress,
+        elapsed,
+        message: `Scanning... ${toolProgress || progress}%`
+      });
+    }, 2000); // Update every 2 seconds
 
     // Collect output
     const collectPromise = new Promise<void>((resolve, reject) => {
@@ -200,6 +228,18 @@ export class DockerService extends EventEmitter {
         throw error;
       }
       throw error;
+    } finally {
+      // Clean up progress interval
+      clearInterval(progressInterval);
+      
+      // Emit final progress
+      process.emit('workflow:tool:progress' as any, {
+        containerId: config.name,
+        workflowId: config.workflowId,
+        progress: 100,
+        elapsed: Date.now() - startTime,
+        message: 'Scan complete'
+      });
     }
 
     return {
@@ -393,15 +433,12 @@ export class DockerService extends EventEmitter {
   }
 
   private createOutputStream(output: string[]): NodeJS.WritableStream {
-    const writable = new Readable({
-      read() {}
+    return new Writable({
+      write(chunk: any, encoding: BufferEncoding, callback: (error?: Error | null) => void) {
+        output.push(chunk.toString());
+        callback();
+      }
     });
-
-    writable.on('data', (chunk) => {
-      output.push(chunk.toString());
-    });
-
-    return writable as any;
   }
 
   /**

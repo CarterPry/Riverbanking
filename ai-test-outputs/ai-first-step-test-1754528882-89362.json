@@ -1,0 +1,21 @@
+{
+  "workflowId": "null",
+  "timestamp": "2025-08-07T01:08:12Z",
+  "request": {
+  "target": "https://sweetspotgov.com",
+  "scope": "/*",
+  "description": "I want you to test against all subdomains and dir's. Test all access, stuff like sql injection, sending JWT tokens, catching any leaky api's stuff like this.",
+  "testType": "comprehensive",
+  "options": {
+    "includeRecon": true,
+    "includeSubdomains": true,
+    "testAuthentication": true,
+    "testAPIs": true,
+    "verboseLogging": true,
+    "captureAIReasoning": true,
+    "maxInitialTests": 5
+  }
+},
+  "initialResponse": {"error":"Missing required fields: target and userIntent"}},
+  "statusResponse": {"error":"Workflow not found"}}
+}

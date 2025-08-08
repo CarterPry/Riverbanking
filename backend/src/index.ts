@@ -1,342 +1,244 @@
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
-import { createServer } from 'http';
-import { WebSocketServer } from 'ws';
-import { WorkflowController } from './api/controllers/workflowController.js';
-import { createWorkflowRoutes, createPublicRoutes, createAdminRoutes } from './api/routes/workflowRoutes.js';
-import { createLogger } from './utils/logger.js';
+import http from 'http';
+import { config } from 'dotenv';
 import path from 'path';
+import { fileURLToPath } from 'url';
+import { createLogger } from './utils/logger.js';
+import { setupDatabase } from './utils/database.js';
 
-// Use a different variable name to avoid conflicts in CommonJS
-const rootDir = path.resolve();
+// New AI-integrated components
+import { AIOrchestrator } from './orchestration/aiOrchestrator.js';
+import { EnhancedWebSocketManager } from './websocket/enhancedWebSocketManager.js';
+import { AIAgentEnhanced } from './layers/aiAgentEnhanced.js';
+import { AIDecisionLogger } from './audit/aiDecisionLogger.js';
+import { HITLApprovalSystem } from './approval/hitlApprovalSystem.js';
 
-// Load environment variables
-dotenv.config({ path: path.join(rootDir, '../.env') });
+// Legacy components (to be phased out)
+// import workflowRoutes from './api/routes/workflowRoutes.js';
 
-// Create logger
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+config({ path: path.join(__dirname, '../../.env') });
+
 const logger = createLogger('Server');
-
-// Create Express app
 const app = express();
-const PORT = process.env.API_PORT || 3000;
+const server = http.createServer(app);
 
 // Middleware
-app.use(cors({
-  origin: (origin, callback) => {
-    const allowedOrigins = [
-      'http://localhost:3001',
-      'http://localhost:3002',
-      'http://localhost:5173' // Vite default port
-    ];
-    
-    // Allow requests with no origin (like mobile apps or Postman)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.includes(origin) || origin.includes('localhost')) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true
-}));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(cors());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// Request logging middleware
-app.use((req, res, next) => {
-  const start = Date.now();
-  
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    logger.info('HTTP Request', {
-      method: req.method,
-      path: req.path,
-      status: res.statusCode,
-      duration,
-      ip: req.ip,
-      userAgent: req.get('user-agent')
-    });
-  });
-  
-  next();
-});
-
-// Check Docker availability before initializing services
-if (!process.env.DOCKER_HOST && process.env.NODE_ENV !== 'production') {
-  process.env.MOCK_DOCKER = 'true';
-  logger.warn('Docker not available, using mock mode');
-}
-
-// Initialize workflow controller
-const workflowController = new WorkflowController();
-
-// Setup routes
-app.use('/api', createPublicRoutes());
-app.use('/api', createWorkflowRoutes(workflowController));
-app.use('/api/admin', createAdminRoutes(workflowController));
-
-// Health check endpoint at root
+// Health check
 app.get('/health', (req, res) => {
   res.json({ 
-    status: 'ok', 
-    service: 'soc2-testing-platform-backend',
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
-  });
-});
-
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({
-    error: 'Not Found',
-    message: `Route ${req.method} ${req.path} not found`
-  });
-});
-
-// Error handling middleware
-app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  logger.error('Unhandled error', { 
-    error: err.message, 
-    stack: err.stack,
-    path: req.path,
-    method: req.method
-  });
-  
-  res.status(err.status || 500).json({ 
-    error: err.name || 'Internal Server Error',
-    message: process.env.NODE_ENV === 'development' ? err.message : 'An error occurred'
-  });
-});
-
-// Create HTTP server
-const server = createServer(app);
-
-// Create WebSocket server for real-time updates
-const wss = new WebSocketServer({ server, path: '/ws' });
-
-// Track WebSocket clients by workflow
-const wsClients = new Map<string, Set<any>>();
-
-wss.on('connection', (ws, req) => {
-  logger.info('WebSocket client connected', { 
-    url: req.url,
-    headers: req.headers
-  });
-  
-  let workflowId: string | null = null;
-  
-  // Add ping/pong to keep connection alive
-  const pingInterval = setInterval(() => {
-    if (ws.readyState === 1) {
-      ws.ping();
+    status: 'healthy',
+    mode: 'ai-integrated',
+    features: {
+      strategicAI: true,
+      progressiveDiscovery: true,
+      realtimeUpdates: true,
+      aiDecisionAudit: true
     }
-  }, 30000); // Ping every 30 seconds
+  });
+});
+
+// Initialize AI-integrated system
+async function initializeAISystem() {
+  logger.info('Initializing AI-integrated security testing platform');
   
-  // Parse workflowId from URL query parameters
-  if (req.url) {
-    try {
-      const url = new URL(req.url, `http://localhost:${PORT}`);
-      const urlWorkflowId = url.searchParams.get('workflowId');
-      if (urlWorkflowId) {
-        workflowId = urlWorkflowId;
+  try {
+    // Setup database
+    await setupDatabase();
+    
+    // Initialize WebSocket manager
+    const wsManager = new EnhancedWebSocketManager(server, { path: '/ws' });
+    
+    // Initialize AI orchestrator
+    const orchestrator = new AIOrchestrator(wsManager);
+    
+    // Initialize decision logger
+    const decisionLogger = new AIDecisionLogger({
+      persistPath: './logs/ai-decisions',
+      realTimeMode: true,
+      complianceMode: true
+    });
+    
+    // Initialize approval system
+    const approvalSystem = new HITLApprovalSystem();
+    
+    // Initialize enhanced AI agent
+    const aiAgent = new AIAgentEnhanced(decisionLogger);
+    
+    // API Routes for AI-integrated workflow
+    app.post('/api/v2/workflow/execute', async (req, res) => {
+      try {
+        const { target, userIntent, constraints } = req.body;
         
-        // Auto-subscribe based on URL parameter
-        if (!wsClients.has(workflowId)) {
-          wsClients.set(workflowId, new Set());
+        if (!target || !userIntent) {
+          return res.status(400).json({
+            error: 'Missing required fields: target and userIntent'
+          });
         }
-        wsClients.get(workflowId)!.add(ws);
         
-        logger.info('WebSocket client auto-subscribed', { workflowId });
+        logger.info('Executing AI-driven workflow', { target, userIntent });
         
-        // Send messages after a small delay to ensure connection is stable
-        setTimeout(() => {
-          if (ws.readyState === 1) { // WebSocket.OPEN
-            try {
-              // Send initial status message
-              ws.send(JSON.stringify({ 
-                type: 'status', 
-                workflowId,
-                data: {
-                  message: 'Connected to SOC2 Testing Platform',
-                  status: 'connected'
-                },
-                timestamp: new Date().toISOString()
-              }));
-            } catch (err) {
-              logger.error('Error sending initial messages', { error: err });
-            }
-          }
-        }, 100); // 100ms delay
-      } else {
-        // No workflowId in URL, just send status message
-        setTimeout(() => {
-          if (ws.readyState === 1) { // WebSocket.OPEN
-            try {
-              ws.send(JSON.stringify({ 
-                type: 'status', 
-                data: {
-                  message: 'Connected to SOC2 Testing Platform',
-                  status: 'connected'
-                },
-                timestamp: new Date().toISOString()
-              }));
-            } catch (err) {
-              logger.error('Error sending connection message', { error: err });
-            }
-          }
-        }, 100);
+        // Execute workflow
+        const result = await orchestrator.executeWorkflow({
+          target,
+          userIntent,
+          constraints
+        });
+        
+        res.json({
+          success: true,
+          result
+        });
+        
+      } catch (error) {
+        logger.error('Workflow execution failed', { error });
+        res.status(500).json({
+          error: 'Workflow execution failed',
+          message: error instanceof Error ? error.message : 'Unknown error'
+        });
       }
-    } catch (error) {
-      logger.error('Error parsing WebSocket URL', { error, url: req.url });
-    }
-  }
-  
-  ws.on('message', (message) => {
-    try {
-      const data = JSON.parse(message.toString());
+    });
+    
+    // Get workflow status
+    app.get('/api/v2/workflow/:workflowId/status', (req, res) => {
+      const status = orchestrator.getWorkflowStatus(req.params.workflowId);
       
-      if (data.type === 'subscribe' && data.workflowId) {
-        workflowId = data.workflowId;
-        const wfId = workflowId as string;
-        
-        if (!wsClients.has(wfId)) {
-          wsClients.set(wfId, new Set());
-        }
-        wsClients.get(wfId)!.add(ws);
-        
-        ws.send(JSON.stringify({ 
-          type: 'status', 
-          workflowId,
-          data: {
-            message: `Subscribed to workflow ${workflowId}`,
-            status: 'subscribed'
-          },
-          timestamp: new Date().toISOString()
-        }));
+      if (!status) {
+        return res.status(404).json({ error: 'Workflow not found' });
       }
-    } catch (error) {
-      logger.error('WebSocket message error', { error });
-    }
-  });
-  
-  ws.on('close', () => {
-    logger.info('WebSocket client disconnected');
-    
-    // Clear ping interval
-    clearInterval(pingInterval);
-    
-    // Remove from all workflow subscriptions
-    if (workflowId) {
-      const clients = wsClients.get(workflowId);
-      if (clients) {
-        clients.delete(ws);
-        if (clients.size === 0) {
-          wsClients.delete(workflowId);
-        }
-      }
-    }
-  });
-  
-  ws.on('error', (error) => {
-    logger.error('WebSocket error', { error });
-  });
-});
-
-// Broadcast workflow updates to subscribed clients
-function broadcastWorkflowUpdate(workflowId: string, update: any) {
-  const clients = wsClients.get(workflowId);
-  if (clients) {
-    const message = JSON.stringify({
-      type: 'workflow-update',
-      workflowId,
-      update,
-      timestamp: new Date().toISOString()
+      
+      res.json(status);
     });
     
-    clients.forEach(client => {
-      if (client.readyState === 1) { // WebSocket.OPEN
-        client.send(message);
+    // Abort workflow
+    app.post('/api/v2/workflow/:workflowId/abort', async (req, res) => {
+      try {
+        await orchestrator.abortWorkflow(req.params.workflowId);
+        res.json({ success: true });
+      } catch (error) {
+        res.status(404).json({ 
+          error: error instanceof Error ? error.message : 'Workflow not found' 
+        });
       }
     });
+    
+    // Process approval
+    app.post('/api/v2/approval/:approvalId/process', async (req, res) => {
+      try {
+        const { approved, approver, reason } = req.body;
+        
+        await approvalSystem.processApproval(req.params.approvalId, {
+          approved,
+          approver,
+          reason
+        });
+        
+        res.json({ success: true });
+      } catch (error) {
+        res.status(400).json({
+          error: error instanceof Error ? error.message : 'Invalid approval'
+        });
+      }
+    });
+    
+    // Get AI decision audit
+    app.get('/api/v2/workflow/:workflowId/audit', async (req, res) => {
+      try {
+        const audit = await decisionLogger.generateAuditReport(req.params.workflowId);
+        res.json(audit);
+      } catch (error) {
+        res.status(404).json({ error: 'Audit not found' });
+      }
+    });
+    
+    // Get pending approvals
+    app.get('/api/v2/approvals/pending', (req, res) => {
+      const pending = approvalSystem.getPendingApprovals();
+      res.json(pending);
+    });
+    
+    // WebSocket endpoint for real-time updates is handled by wsManager at /ws
+    
+    // Legacy routes (kept for backward compatibility)
+    // app.use('/api/workflows', workflowRoutes);
+    
+    logger.info('AI-integrated system initialized successfully');
+    
+    return {
+      orchestrator,
+      wsManager,
+      decisionLogger,
+      approvalSystem,
+      aiAgent
+    };
+    
+  } catch (error) {
+    logger.error('Failed to initialize AI system', { 
+      error: error instanceof Error ? {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      } : String(error)
+    });
+    throw error;
   }
 }
 
-// Initialize services and start server
+// Start server
 async function startServer() {
   try {
-    logger.info('Initializing services...');
+    // Initialize AI system
+    const aiSystem = await initializeAISystem();
     
-    // Debug environment variables
-    logger.info('Environment check', {
-      DOCKER_HOST: process.env.DOCKER_HOST,
-      MOCK_DOCKER: process.env.MOCK_DOCKER,
-      NODE_ENV: process.env.NODE_ENV
+    const PORT = process.env.PORT || 3001;
+    
+    server.listen(PORT, () => {
+      logger.info(`AI-integrated security testing platform running on port ${PORT}`);
+      logger.info('Key features enabled:', {
+        strategicAI: 'Anthropic Claude for decision making',
+        embeddings: 'OpenAI for semantic search',
+        progressiveDiscovery: 'Dynamic phase-based testing',
+        realTimeUpdates: 'WebSocket dashboard integration',
+        aiAudit: 'Complete decision tracking and compliance',
+        approvals: 'HITL system for critical operations'
+      });
     });
     
-    // Initialize the workflow controller
-    await workflowController.initialize();
-    
-    // Set up workflow event broadcasting
-    const mcpServer = (workflowController as any).mcpServer;
-    if (mcpServer) {
-      mcpServer.on('workflow:start', (data: any) => broadcastWorkflowUpdate(data.workflowId, { event: 'start', ...data }));
-      mcpServer.on('workflow:classified', (data: any) => broadcastWorkflowUpdate(data.workflowId, { event: 'classified', ...data }));
-      mcpServer.on('workflow:enriched', (data: any) => broadcastWorkflowUpdate(data.workflowId, { event: 'enriched', ...data }));
-      mcpServer.on('workflow:phase:start', (data: any) => broadcastWorkflowUpdate(data.workflowId, { event: 'phase:start', ...data }));
-      mcpServer.on('workflow:phase:complete', (data: any) => broadcastWorkflowUpdate(data.workflowId, { event: 'phase:complete', ...data }));
-    }
-    
-    // Set up periodic cleanup
-    setInterval(() => {
-      workflowController.cleanupOldWorkflows();
-    }, 60 * 60 * 1000); // Every hour
-    
-    // Start server
-    server.listen(PORT, () => {
-      logger.info(`Backend server running on http://localhost:${PORT}`);
-      logger.info(`WebSocket server available at ws://localhost:${PORT}/ws`);
-      logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
-      logger.info(`Mock Docker: ${process.env.MOCK_DOCKER === 'true' ? 'enabled' : 'disabled'}`);
+    // Graceful shutdown
+    process.on('SIGTERM', async () => {
+      logger.info('SIGTERM received, shutting down gracefully');
+      
+      // Close WebSocket connections
+      if (aiSystem.wsManager) {
+        aiSystem.wsManager.shutdown();
+      }
+      
+      // Close server
+      server.close(() => {
+        logger.info('Server closed');
+        process.exit(0);
+      });
     });
     
   } catch (error) {
-    logger.error('Failed to start server', { error });
+    logger.error('Failed to start server', { 
+      error: error instanceof Error ? {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      } : String(error)
+    });
     process.exit(1);
   }
 }
 
-// Handle graceful shutdown
-process.on('SIGTERM', async () => {
-  logger.info('SIGTERM received, shutting down gracefully...');
-  
-  server.close(() => {
-    logger.info('HTTP server closed');
-  });
-  
-  wss.close(() => {
-    logger.info('WebSocket server closed');
-  });
-  
-  await workflowController.cleanup();
-  process.exit(0);
-});
-
-process.on('SIGINT', async () => {
-  logger.info('SIGINT received, shutting down gracefully...');
-  
-  server.close(() => {
-    logger.info('HTTP server closed');
-  });
-  
-  wss.close(() => {
-    logger.info('WebSocket server closed');
-  });
-  
-  await workflowController.cleanup();
-  process.exit(0);
-});
-
 // Start the server
-startServer(); 
+startServer();
+
+export default app;

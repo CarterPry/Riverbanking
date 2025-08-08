@@ -1,0 +1,118 @@
+{
+  "target": "console.sweetspotgov.com",
+  "testName": "Comprehensive Sweetspot Security Assessment",
+  "description": "Full security testing including all subdomains, directories, SQL injection, JWT tokens, and API vulnerabilities",
+  "configuration": {
+    "scope": {
+      "includeSubdomains": true,
+      "recursiveDepth": 5,
+      "followRedirects": true,
+      "testAuthenticatedEndpoints": true,
+      "scanAllDirectories": true
+    },
+    "authentication": {
+      "testJWTManipulation": true,
+      "testTokenLeakage": true,
+      "testSessionFixation": true,
+      "bruteForceProtection": true
+    },
+    "attacks": {
+      "sqlInjection": {
+        "enabled": true,
+        "variants": ["classic", "blind", "time-based", "union-based", "error-based"],
+        "testAllParameters": true,
+        "testHeaders": true,
+        "testCookies": true
+      },
+      "apiSecurity": {
+        "enabled": true,
+        "tests": [
+          "unauthorized-access",
+          "broken-object-level-authorization",
+          "broken-user-authentication",
+          "excessive-data-exposure",
+          "broken-function-level-authorization",
+          "mass-assignment",
+          "security-misconfiguration",
+          "injection",
+          "improper-assets-management",
+          "insufficient-logging"
+        ]
+      },
+      "authentication": {
+        "enabled": true,
+        "jwtTests": [
+          "algorithm-confusion",
+          "key-confusion",
+          "weak-secret",
+          "none-algorithm",
+          "expired-token-acceptance",
+          "signature-stripping"
+        ]
+      },
+      "directoryTraversal": {
+        "enabled": true,
+        "depth": 10,
+        "testHiddenDirectories": true,
+        "commonPaths": [
+          "/.git/", "/.env", "/admin/", "/api/", "/v1/", "/v2/", 
+          "/graphql", "/swagger", "/docs/", "/backup/", "/test/",
+          "/.well-known/", "/debug/", "/config/", "/.aws/"
+        ]
+      },
+      "subdomainEnumeration": {
+        "enabled": true,
+        "techniques": ["dns-brute", "certificate-transparency", "search-engines"],
+        "testPatterns": [
+          "api", "admin", "test", "dev", "staging", "uat", "prod",
+          "console", "portal", "dashboard", "internal", "secure"
+        ]
+      }
+    },
+    "reporting": {
+      "includeProofOfConcept": true,
+      "severityThreshold": "info",
+      "groupByVulnerability": true
+    }
+  },
+  "customTests": [
+    {
+      "name": "JWT Token Security",
+      "description": "Comprehensive JWT token manipulation and security testing",
+      "steps": [
+        "Extract JWT tokens from all responses",
+        "Test algorithm confusion attacks",
+        "Test key confusion vulnerabilities",
+        "Check for weak secrets",
+        "Test none algorithm acceptance",
+        "Verify token expiration enforcement",
+        "Test signature stripping",
+        "Check for information disclosure in claims"
+      ]
+    },
+    {
+      "name": "API Endpoint Discovery",
+      "description": "Discover and test all API endpoints",
+      "steps": [
+        "Crawl application for API endpoints",
+        "Check common API paths (/api/v1, /graphql, etc.)",
+        "Test for API documentation endpoints",
+        "Identify authentication requirements",
+        "Test for excessive data exposure",
+        "Check rate limiting",
+        "Test CORS configuration"
+      ]
+    },
+    {
+      "name": "Subdomain Security Assessment",
+      "description": "Enumerate and test all subdomains",
+      "steps": [
+        "DNS enumeration for subdomains",
+        "Certificate transparency log analysis",
+        "Test each subdomain for vulnerabilities",
+        "Check for subdomain takeover possibilities",
+        "Verify consistent security headers across subdomains"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Communication Monitor</title>
+    <style>
+        body {
+            font-family: 'Monaco', 'Consolas', monospace;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            margin: 0;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        
+        h1 {
+            color: #4ec9b0;
+            border-bottom: 2px solid #4ec9b0;
+            padding-bottom: 10px;
+        }
+        
+        .section {
+            background: #252526;
+            border: 1px solid #3e3e3e;
+            border-radius: 5px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+        
+        .section-title {
+            color: #dcdcaa;
+            font-weight: bold;
+            margin-bottom: 10px;
+            font-size: 1.1em;
+        }
+        
+        .classification { border-left: 3px solid #4ec9b0; }
+        .enrichment { border-left: 3px solid #c586c0; }
+        .trust { border-left: 3px solid #569cd6; }
+        .execution { border-left: 3px solid #f44747; }
+        .embedding { border-left: 3px solid #ce9178; }
+        
+        .log-entry {
+            background: #1e1e1e;
+            padding: 8px;
+            margin: 5px 0;
+            border-radius: 3px;
+            font-size: 0.9em;
+        }
+        
+        .timestamp {
+            color: #808080;
+            font-size: 0.8em;
+        }
+        
+        .progress-bar {
+            background: #3e3e3e;
+            height: 20px;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 5px 0;
+        }
+        
+        .progress-fill {
+            background: #4ec9b0;
+            height: 100%;
+            transition: width 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #1e1e1e;
+            font-weight: bold;
+        }
+        
+        .json-view {
+            background: #1e1e1e;
+            padding: 10px;
+            border-radius: 3px;
+            overflow-x: auto;
+            font-size: 0.85em;
+        }
+        
+        .similarity-score {
+            display: inline-block;
+            width: 200px;
+            background: #3e3e3e;
+            height: 10px;
+            border-radius: 5px;
+            margin-left: 10px;
+            position: relative;
+        }
+        
+        .similarity-fill {
+            background: linear-gradient(to right, #f44747, #dcdcaa, #4ec9b0);
+            height: 100%;
+            border-radius: 5px;
+        }
+        
+        #status {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 10px 20px;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        
+        .connected { background: #4ec9b0; color: #1e1e1e; }
+        .disconnected { background: #f44747; color: white; }
+        
+        #controls {
+            margin: 20px 0;
+        }
+        
+        button {
+            background: #007acc;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 3px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        
+        button:hover {
+            background: #005a9e;
+        }
+        
+        #workflow-input {
+            padding: 8px;
+            border: 1px solid #3e3e3e;
+            background: #252526;
+            color: #d4d4d4;
+            border-radius: 3px;
+            width: 300px;
+        }
+    </style>
+</head>
+<body>
+    <div id="status" class="disconnected">Disconnected</div>
+    
+    <h1>🧠 AI Communication Monitor</h1>
+    
+    <div id="controls">
+        <input type="text" id="workflow-input" placeholder="Enter workflow ID to monitor">
+        <button onclick="subscribeToWorkflow()">Subscribe</button>
+        <button onclick="clearLogs()">Clear</button>
+    </div>
+    
+    <div id="ai-sections">
+        <div class="section classification">
+            <div class="section-title">🧠 Intent Classification</div>
+            <div id="classification-content">Waiting for data...</div>
+        </div>
+        
+        <div class="section enrichment">
+            <div class="section-title">🔍 Context Enrichment</div>
+            <div id="enrichment-content">Waiting for data...</div>
+        </div>
+        
+        <div class="section trust">
+            <div class="section-title">🛡️ Trust Classification</div>
+            <div id="trust-content">Waiting for data...</div>
+        </div>
+        
+        <div class="section embedding">
+            <div class="section-title">🔢 Embeddings</div>
+            <div id="embedding-content">Waiting for data...</div>
+        </div>
+        
+        <div class="section execution">
+            <div class="section-title">⚡ Attack Execution</div>
+            <div id="execution-content">Waiting for data...</div>
+        </div>
+    </div>
+    
+    <script>
+        let ws;
+        let currentWorkflow = null;
+        
+        function connect() {
+            ws = new WebSocket('ws://localhost:3000/ws');
+            
+            ws.onopen = () => {
+                console.log('Connected to WebSocket');
+                document.getElementById('status').className = 'connected';
+                document.getElementById('status').textContent = 'Connected';
+            };
+            
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleMessage(data);
+                } catch (error) {
+                    console.error('Failed to parse message:', error);
+                }
+            };
+            
+            ws.onclose = () => {
+                document.getElementById('status').className = 'disconnected';
+                document.getElementById('status').textContent = 'Disconnected';
+                setTimeout(connect, 2000);
+            };
+        }
+        
+        function handleMessage(data) {
+            const timestamp = new Date().toLocaleTimeString();
+            
+            switch(data.type) {
+                case 'classification:progress':
+                    updateClassification(data.data, timestamp);
+                    break;
+                    
+                case 'enrichment:progress':
+                    updateEnrichment(data.data, timestamp);
+                    break;
+                    
+                case 'log':
+                    if (data.category === 'ai') {
+                        handleAILog(data, timestamp);
+                    }
+                    break;
+                    
+                case 'attack:start':
+                    updateExecution(data.data, timestamp, 'start');
+                    break;
+                    
+                case 'attack:progress':
+                case 'tool:progress':
+                    updateExecution(data.data, timestamp, 'progress');
+                    break;
+                    
+                case 'attack:complete':
+                    updateExecution(data.data, timestamp, 'complete');
+                    break;
+            }
+        }
+        
+        function updateClassification(data, timestamp) {
+            const content = document.getElementById('classification-content');
+            
+            let html = `<div class="log-entry">`;
+            html += `<span class="timestamp">${timestamp}</span><br>`;
+            
+            if (data.message) {
+                html += `<strong>Status:</strong> ${data.message}<br>`;
+            }
+            
+            if (data.progress !== undefined) {
+                html += `<div class="progress-bar">
+                    <div class="progress-fill" style="width: ${data.progress}%">${data.progress}%</div>
+                </div>`;
+            }
+            
+            if (data.similarityScores) {
+                html += '<strong>Similarity Scores:</strong><br>';
+                Object.entries(data.similarityScores).forEach(([attack, score]) => {
+                    html += `${attack}: <span class="similarity-score">
+                        <span class="similarity-fill" style="width: ${score * 100}%"></span>
+                    </span> ${(score * 100).toFixed(1)}%<br>`;
+                });
+            }
+            
+            if (data.topMatches) {
+                html += '<strong>Top Matches:</strong><br>';
+                data.topMatches.forEach((match, i) => {
+                    html += `${i + 1}. ${match.type} (${(match.score * 100).toFixed(1)}%)<br>`;
+                });
+            }
+            
+            html += '</div>';
+            content.innerHTML = html + content.innerHTML;
+        }
+        
+        function updateEnrichment(data, timestamp) {
+            const content = document.getElementById('enrichment-content');
+            
+            let html = `<div class="log-entry">`;
+            html += `<span class="timestamp">${timestamp}</span><br>`;
+            html += `<strong>Progress:</strong> ${data.progress}% - ${data.message}<br>`;
+            
+            if (data.categories) {
+                html += '<strong>Attack Categories:</strong><br>';
+                Object.entries(data.categories).forEach(([cat, count]) => {
+                    html += `- ${cat}: ${count} attacks<br>`;
+                });
+            }
+            
+            html += '</div>';
+            content.innerHTML = html + content.innerHTML;
+        }
+        
+        function updateExecution(data, timestamp, phase) {
+            const content = document.getElementById('execution-content');
+            
+            let html = `<div class="log-entry">`;
+            html += `<span class="timestamp">${timestamp}</span><br>`;
+            
+            if (phase === 'start') {
+                html += `<strong>🚀 Starting:</strong> ${data.tool || data.attackId}<br>`;
+                html += `Target: ${data.params?.target || 'Unknown'}<br>`;
+            } else if (phase === 'progress') {
+                html += `<strong>📊 Progress:</strong> ${data.tool || data.containerId}<br>`;
+                html += `${data.progress}% - ${data.message}<br>`;
+            } else if (phase === 'complete') {
+                html += `<strong>✅ Completed:</strong> ${data.tool || data.attackId}<br>`;
+                if (data.findings) {
+                    html += `Findings: ${data.findings.length}<br>`;
+                }
+            }
+            
+            html += '</div>';
+            content.innerHTML = html + content.innerHTML;
+        }
+        
+        function handleAILog(data, timestamp) {
+            // Handle specific AI module logs
+            if (data.data?.module === 'EmbeddingService') {
+                const content = document.getElementById('embedding-content');
+                let html = `<div class="log-entry">`;
+                html += `<span class="timestamp">${timestamp}</span><br>`;
+                html += `<strong>Embedding Request:</strong><br>`;
+                html += `Text: "${data.data.text?.substring(0, 100)}..."<br>`;
+                html += '</div>';
+                content.innerHTML = html + content.innerHTML;
+            }
+        }
+        
+        function subscribeToWorkflow() {
+            const workflowId = document.getElementById('workflow-input').value;
+            if (workflowId && ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'subscribe',
+                    workflowId: workflowId
+                }));
+                currentWorkflow = workflowId;
+                console.log('Subscribed to workflow:', workflowId);
+                
+                // Also fetch historical AI data
+                fetch(`/api/debug/ai-communication/${workflowId}`)
+                    .then(res => res.json())
+                    .then(data => {
+                        console.log('AI Communication Data:', data);
+                    })
+                    .catch(err => console.error('Failed to fetch AI data:', err));
+            }
+        }
+        
+        function clearLogs() {
+            ['classification', 'enrichment', 'trust', 'embedding', 'execution'].forEach(section => {
+                document.getElementById(`${section}-content`).innerHTML = 'Waiting for data...';
+            });
+        }
+        
+        // Connect on load
+        connect();
+    </script>
+</body>
+</html>

@@ -133,6 +133,7 @@ services:
       - default
     volumes:
       - ./tmp:/tmp/results
+      - ./seclists:/seclists:ro  # SecLists wordlists (read-only)
     command: tail -f /dev/null  # Keep container running
 
 volumes:

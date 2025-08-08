@@ -1,0 +1,818 @@
+import { EventEmitter } from 'events';
+import { v4 as uuidv4 } from 'uuid';
+import Docker from 'dockerode';
+import * as child_process from 'child_process';
+import { promisify } from 'util';
+import { createLogger } from '../utils/logger.js';
+import { owaspKnowledgeBase } from '../knowledge/owaspKnowledgeBase.js';
+import { EnhancedRestraintSystem } from '../restraint/enhancedRestraintSystem.js';
+import { AIDecisionLogger } from '../audit/aiDecisionLogger.js';
+
+const exec = promisify(child_process.exec);
+const logger = createLogger('TestExecutionEngine');
+
+export interface ToolDefinition {
+  name: string;
+  displayName: string;
+  description: string;
+  dockerImage: string;
+  command: string;
+  parameters: ParameterDefinition[];
+  outputParser: (output: string) => any;
+  requiresAuth?: boolean;
+  safetyLevel: 'low' | 'medium' | 'high';
+  timeout?: number;
+  owaspCategories?: string[];
+  ccControls?: string[];
+}
+
+export interface ParameterDefinition {
+  name: string;
+  type: 'string' | 'number' | 'boolean' | 'array';
+  required: boolean;
+  description: string;
+  default?: any;
+  validation?: (value: any) => boolean;
+}
+
+export interface ExecutionRequest {
+  tool: string;
+  parameters: Record<string, any>;
+  workflowId: string;
+  timeout?: number;
+  priority?: 'low' | 'medium' | 'high' | 'critical';
+  retryOnFailure?: boolean;
+}
+
+export interface ExecutionResult {
+  requestId: string;
+  tool: string;
+  status: 'success' | 'failed' | 'timeout' | 'skipped';
+  startTime: Date;
+  endTime: Date;
+  duration: number;
+  output?: string;
+  findings?: any[];
+  error?: string;
+  metadata?: Record<string, any>;
+}
+
+export class TestExecutionEngine extends EventEmitter {
+  private docker: Docker;
+  private tools: Map<string, ToolDefinition> = new Map();
+  private activeExecutions: Map<string, any> = new Map();
+  private executionQueue: ExecutionRequest[] = [];
+  private restraintSystem: EnhancedRestraintSystem;
+  private decisionLogger: AIDecisionLogger;
+  private maxConcurrent: number = 3;
+  private currentExecutions: number = 0;
+
+  constructor(
+    restraintSystem: EnhancedRestraintSystem,
+    decisionLogger: AIDecisionLogger,
+    options?: { maxConcurrent?: number }
+  ) {
+    super();
+    this.docker = new Docker();
+    this.restraintSystem = restraintSystem;
+    this.decisionLogger = decisionLogger;
+    this.maxConcurrent = options?.maxConcurrent || 3;
+    
+    this.initializeTools();
+    this.startQueueProcessor();
+  }
+
+  private initializeTools(): void {
+    // Reconnaissance Tools
+    this.registerTool({
+      name: 'subdomain-scanner',
+      displayName: 'Subdomain Scanner',
+      description: 'Enumerate subdomains for a given domain',
+      dockerImage: 'projectdiscovery/subfinder:latest',
+      command: 'subfinder -d {{target}} -silent -json',
+      parameters: [
+        {
+          name: 'target',
+          type: 'string',
+          required: true,
+          description: 'Target domain to scan'
+        }
+      ],
+      outputParser: this.parseSubdomainOutput,
+      safetyLevel: 'low',
+      timeout: 300000,
+      owaspCategories: ['A05:2021'],
+      ccControls: ['CC6.6']
+    });
+
+    this.registerTool({
+      name: 'port-scanner',
+      displayName: 'Port Scanner',
+      description: 'Scan for open ports and services',
+      dockerImage: 'instrumentisto/nmap:latest',
+      command: 'nmap -sV -T4 --top-ports {{ports}} -oX - {{target}}',
+      parameters: [
+        {
+          name: 'target',
+          type: 'string',
+          required: true,
+          description: 'Target to scan'
+        },
+        {
+          name: 'ports',
+          type: 'string',
+          required: false,
+          description: 'Number of top ports or specific ports',
+          default: '1000'
+        }
+      ],
+      outputParser: this.parseNmapOutput,
+      safetyLevel: 'low',
+      timeout: 600000,
+      owaspCategories: ['A05:2021', 'A06:2021'],
+      ccControls: ['CC6.6', 'CC7.1']
+    });
+
+    this.registerTool({
+      name: 'directory-scanner',
+      displayName: 'Directory Scanner',
+      description: 'Enumerate directories and files',
+      dockerImage: 'ghcr.io/owasp/zap:stable',
+      command: 'zap-cli quick-scan --spider -r {{target}}',
+      parameters: [
+        {
+          name: 'target',
+          type: 'string',
+          required: true,
+          description: 'Target URL to scan'
+        }
+      ],
+      outputParser: this.parseDirectoryOutput,
+      safetyLevel: 'low',
+      timeout: 600000,
+      owaspCategories: ['A01:2021', 'A05:2021'],
+      ccControls: ['CC6.1', 'CC6.6']
+    });
+
+    // Analysis Tools
+    this.registerTool({
+      name: 'header-analyzer',
+      displayName: 'Security Header Analyzer',
+      description: 'Analyze HTTP security headers',
+      dockerImage: 'aquasec/trivy:latest',
+      command: 'trivy config --security-checks vuln {{target}}',
+      parameters: [
+        {
+          name: 'target',
+          type: 'string',
+          required: true,
+          description: 'Target URL'
+        }
+      ],
+      outputParser: this.parseHeaderOutput,
+      safetyLevel: 'low',
+      timeout: 60000,
+      owaspCategories: ['A05:2021'],
+      ccControls: ['CC6.1', 'CC6.7']
+    });
+
+    this.registerTool({
+      name: 'ssl-checker',
+      displayName: 'SSL/TLS Checker',
+      description: 'Check SSL/TLS configuration',
+      dockerImage: 'drwetter/testssl.sh:latest',
+      command: './testssl.sh --json-pretty {{target}}',
+      parameters: [
+        {
+          name: 'target',
+          type: 'string',
+          required: true,
+          description: 'Target host:port'
+        }
+      ],
+      outputParser: this.parseSSLOutput,
+      safetyLevel: 'low',
+      timeout: 300000,
+      owaspCategories: ['A02:2021', 'A06:2021'],
+      ccControls: ['CC6.1', 'CC6.7']
+    });
+
+    // Vulnerability Testing Tools
+    this.registerTool({
+      name: 'sql-injection',
+      displayName: 'SQL Injection Scanner',
+      description: 'Test for SQL injection vulnerabilities',
+      dockerImage: 'ghcr.io/sqlmapproject/sqlmap:latest',
+      command: 'python sqlmap.py -u "{{target}}" --batch --risk={{risk}} --level={{level}} --json',
+      parameters: [
+        {
+          name: 'target',
+          type: 'string',
+          required: true,
+          description: 'Target URL with parameters'
+        },
+        {
+          name: 'risk',
+          type: 'number',
+          required: false,
+          description: 'Risk level (1-3)',
+          default: 1,
+          validation: (v) => v >= 1 && v <= 3
+        },
+        {
+          name: 'level',
+          type: 'number',
+          required: false,
+          description: 'Test level (1-5)',
+          default: 1,
+          validation: (v) => v >= 1 && v <= 5
+        }
+      ],
+      outputParser: this.parseSQLiOutput,
+      safetyLevel: 'medium',
+      timeout: 900000,
+      owaspCategories: ['A03:2021'],
+      ccControls: ['CC6.1', 'CC7.1']
+    });
+
+    this.registerTool({
+      name: 'xss-scanner',
+      displayName: 'XSS Scanner',
+      description: 'Test for cross-site scripting vulnerabilities',
+      dockerImage: 'ghcr.io/owasp/zap:stable',
+      command: 'zap-cli active-scan --scanners xss -r {{target}}',
+      parameters: [
+        {
+          name: 'target',
+          type: 'string',
+          required: true,
+          description: 'Target URL'
+        }
+      ],
+      outputParser: this.parseXSSOutput,
+      safetyLevel: 'low',
+      timeout: 600000,
+      owaspCategories: ['A03:2021'],
+      ccControls: ['CC6.1', 'CC7.2']
+    });
+
+    this.registerTool({
+      name: 'jwt-analyzer',
+      displayName: 'JWT Analyzer',
+      description: 'Analyze JWT tokens for vulnerabilities',
+      dockerImage: 'ticarpi/jwt_tool:latest',
+      command: 'python3 jwt_tool.py {{token}} -A',
+      parameters: [
+        {
+          name: 'token',
+          type: 'string',
+          required: true,
+          description: 'JWT token to analyze'
+        }
+      ],
+      outputParser: this.parseJWTOutput,
+      safetyLevel: 'low',
+      timeout: 60000,
+      owaspCategories: ['A02:2021', 'A07:2021'],
+      ccControls: ['CC6.1', 'CC6.7']
+    });
+
+    this.registerTool({
+      name: 'api-fuzzer',
+      displayName: 'API Fuzzer',
+      description: 'Fuzz test API endpoints',
+      dockerImage: 'owasp/zap2docker-stable:latest',
+      command: 'zap-cli ajax-spider {{target}} && zap-cli active-scan {{target}}',
+      parameters: [
+        {
+          name: 'target',
+          type: 'string',
+          required: true,
+          description: 'API endpoint URL'
+        }
+      ],
+      outputParser: this.parseAPIFuzzOutput,
+      safetyLevel: 'medium',
+      timeout: 1200000,
+      owaspCategories: ['A01:2021', 'A03:2021', 'A05:2021'],
+      ccControls: ['CC6.1', 'CC7.1']
+    });
+
+    logger.info('Test execution engine initialized', {
+      toolCount: this.tools.size,
+      maxConcurrent: this.maxConcurrent
+    });
+  }
+
+  private registerTool(tool: ToolDefinition): void {
+    this.tools.set(tool.name, tool);
+  }
+
+  async execute(request: ExecutionRequest): Promise<ExecutionResult> {
+    const requestId = uuidv4();
+    const startTime = new Date();
+
+    logger.info('Execution request received', {
+      requestId,
+      tool: request.tool,
+      workflowId: request.workflowId
+    });
+
+    // Check if tool exists
+    const tool = this.tools.get(request.tool);
+    if (!tool) {
+      logger.error('Tool not found', { tool: request.tool });
+      return {
+        requestId,
+        tool: request.tool,
+        status: 'failed',
+        startTime,
+        endTime: new Date(),
+        duration: 0,
+        error: `Tool ${request.tool} not found`
+      };
+    }
+
+    // Apply restraints
+    const restraintDecision = await this.restraintSystem.evaluateTest({
+      workflowId: request.workflowId,
+      test: {
+        tool: request.tool,
+        parameters: request.parameters,
+        requiresAuth: tool.requiresAuth,
+        priority: request.priority
+      },
+      target: request.parameters.target
+    });
+
+    if (!restraintDecision.approved) {
+      logger.warn('Execution denied by restraint system', {
+        requestId,
+        reason: restraintDecision.reason
+      });
+
+      return {
+        requestId,
+        tool: request.tool,
+        status: 'skipped',
+        startTime,
+        endTime: new Date(),
+        duration: 0,
+        error: `Restraint: ${restraintDecision.reason}`
+      };
+    }
+
+    // Apply mitigations if any
+    if (restraintDecision.mitigations) {
+      request.parameters = { ...request.parameters, ...restraintDecision.mitigations };
+    }
+
+    // Queue execution
+    return new Promise((resolve) => {
+      const execution = {
+        requestId,
+        request,
+        tool,
+        startTime,
+        resolve,
+        retryCount: 0
+      };
+
+      this.executionQueue.push(request);
+      this.activeExecutions.set(requestId, execution);
+      
+      // Process queue
+      this.processQueue();
+    });
+  }
+
+  private async processQueue(): Promise<void> {
+    while (this.executionQueue.length > 0 && this.currentExecutions < this.maxConcurrent) {
+      const request = this.executionQueue.shift()!;
+      this.currentExecutions++;
+      
+      // Execute in background
+      this.executeRequest(request).catch(error => {
+        logger.error('Execution failed', { error, tool: request.tool });
+      }).finally(() => {
+        this.currentExecutions--;
+        // Process next in queue
+        setImmediate(() => this.processQueue());
+      });
+    }
+  }
+
+  private async executeRequest(request: ExecutionRequest): Promise<void> {
+    const execution = Array.from(this.activeExecutions.values()).find(
+      e => e.request === request
+    );
+    
+    if (!execution) {
+      logger.error('Execution not found for request');
+      return;
+    }
+
+    const { requestId, tool, startTime, resolve } = execution;
+
+    try {
+      // Build command with parameters
+      let command = tool.command;
+      for (const param of tool.parameters) {
+        const value = request.parameters[param.name] || param.default;
+        if (param.required && !value) {
+          throw new Error(`Missing required parameter: ${param.name}`);
+        }
+        if (value !== undefined) {
+          command = command.replace(`{{${param.name}}}`, value);
+        }
+      }
+
+      logger.info('Executing tool', {
+        requestId,
+        tool: tool.name,
+        dockerImage: tool.dockerImage
+      });
+
+      this.emit('execution:start', {
+        requestId,
+        tool: tool.name,
+        workflowId: request.workflowId
+      });
+
+      // Execute in Docker container
+      const output = await this.runInDocker(tool.dockerImage, command, request.timeout || tool.timeout);
+      
+      // Parse output
+      const findings = tool.outputParser(output);
+      
+      const endTime = new Date();
+      const result: ExecutionResult = {
+        requestId,
+        tool: tool.name,
+        status: 'success',
+        startTime,
+        endTime,
+        duration: endTime.getTime() - startTime.getTime(),
+        output,
+        findings,
+        metadata: {
+          dockerImage: tool.dockerImage,
+          command: command.substring(0, 100) + '...',
+          parametersUsed: Object.keys(request.parameters)
+        }
+      };
+
+      logger.info('Tool execution completed', {
+        requestId,
+        tool: tool.name,
+        findingsCount: findings.length,
+        duration: result.duration
+      });
+
+      this.emit('execution:complete', {
+        requestId,
+        tool: tool.name,
+        workflowId: request.workflowId,
+        findings: findings.length
+      });
+
+      // Log to decision logger
+      await this.decisionLogger.logDecision({
+        workflowId: request.workflowId,
+        decisionType: 'test-selection',
+        input: {
+          tool: tool.name,
+          parameters: request.parameters
+        },
+        output: {
+          decision: 'executed',
+          reasoning: `Executed ${tool.name} successfully`,
+          confidence: 1.0
+        },
+        metadata: {
+          model: 'execution-engine',
+          tool: tool.name,
+          latency: result.duration
+        }
+      });
+
+      resolve(result);
+    } catch (error) {
+      const endTime = new Date();
+      const result: ExecutionResult = {
+        requestId,
+        tool: tool.name,
+        status: 'failed',
+        startTime,
+        endTime,
+        duration: endTime.getTime() - startTime.getTime(),
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+
+      logger.error('Tool execution failed', {
+        requestId,
+        tool: tool.name,
+        error
+      });
+
+      this.emit('execution:failed', {
+        requestId,
+        tool: tool.name,
+        workflowId: request.workflowId,
+        error: result.error
+      });
+
+      // Retry logic
+      if (request.retryOnFailure && execution.retryCount < 2) {
+        execution.retryCount++;
+        logger.info('Retrying execution', {
+          requestId,
+          attempt: execution.retryCount + 1
+        });
+        
+        // Re-queue
+        this.executionQueue.unshift(request);
+        return;
+      }
+
+      resolve(result);
+    } finally {
+      this.activeExecutions.delete(requestId);
+    }
+  }
+
+  private async runInDocker(image: string, command: string, timeout: number = 300000): Promise<string> {
+    const container = await this.docker.createContainer({
+      Image: image,
+      Cmd: command.split(' '),
+      HostConfig: {
+        AutoRemove: true,
+        Memory: 512 * 1024 * 1024, // 512MB
+        CpuQuota: 50000, // 50% CPU
+        SecurityOpt: ['no-new-privileges'],
+        ReadonlyRootfs: false,
+        NetworkMode: 'bridge'
+      }
+    });
+
+    const stream = await container.attach({ stream: true, stdout: true, stderr: true });
+    await container.start();
+
+    let output = '';
+    let timeoutHandle: NodeJS.Timeout;
+
+    return new Promise((resolve, reject) => {
+      // Set timeout
+      timeoutHandle = setTimeout(async () => {
+        try {
+          await container.kill();
+        } catch (e) {
+          // Container might already be stopped
+        }
+        reject(new Error('Execution timeout'));
+      }, timeout);
+
+      stream.on('data', (chunk) => {
+        output += chunk.toString();
+      });
+
+      stream.on('end', async () => {
+        clearTimeout(timeoutHandle);
+        
+        try {
+          const info = await container.inspect();
+          if (info.State.ExitCode !== 0) {
+            reject(new Error(`Container exited with code ${info.State.ExitCode}`));
+          } else {
+            resolve(output);
+          }
+        } catch (error) {
+          // Container might be removed
+          resolve(output);
+        }
+      });
+
+      stream.on('error', (error) => {
+        clearTimeout(timeoutHandle);
+        reject(error);
+      });
+    });
+  }
+
+  private startQueueProcessor(): void {
+    setInterval(() => {
+      if (this.executionQueue.length > 0) {
+        this.processQueue();
+      }
+    }, 1000);
+  }
+
+  // Output Parsers
+  private parseSubdomainOutput(output: string): any[] {
+    const findings = [];
+    try {
+      const lines = output.trim().split('\n');
+      for (const line of lines) {
+        if (line) {
+          try {
+            const data = JSON.parse(line);
+            findings.push({
+              type: 'subdomain',
+              severity: 'info',
+              title: `Subdomain found: ${data.host}`,
+              description: `Discovered subdomain ${data.host}`,
+              evidence: data
+            });
+          } catch {
+            // Not JSON, treat as plain text
+            findings.push({
+              type: 'subdomain',
+              severity: 'info',
+              title: `Subdomain found: ${line}`,
+              description: `Discovered subdomain ${line}`
+            });
+          }
+        }
+      }
+    } catch (error) {
+      logger.error('Failed to parse subdomain output', { error });
+    }
+    return findings;
+  }
+
+  private parseNmapOutput(output: string): any[] {
+    const findings = [];
+    try {
+      // Parse XML output (simplified for this example)
+      const openPorts = output.match(/port="(\d+)".*state="open"/g) || [];
+      for (const match of openPorts) {
+        const port = match.match(/port="(\d+)"/)?.[1];
+        findings.push({
+          type: 'open-port',
+          severity: 'info',
+          title: `Open port: ${port}`,
+          description: `Port ${port} is open and accepting connections`
+        });
+      }
+    } catch (error) {
+      logger.error('Failed to parse nmap output', { error });
+    }
+    return findings;
+  }
+
+  private parseDirectoryOutput(output: string): any[] {
+    const findings = [];
+    try {
+      // Parse directory findings
+      const directories = output.match(/Found: (.+)/g) || [];
+      for (const dir of directories) {
+        findings.push({
+          type: 'directory',
+          severity: 'info',
+          title: `Directory found: ${dir}`,
+          description: `Accessible directory or file discovered`
+        });
+      }
+    } catch (error) {
+      logger.error('Failed to parse directory output', { error });
+    }
+    return findings;
+  }
+
+  private parseHeaderOutput(output: string): any[] {
+    const findings = [];
+    try {
+      const missingHeaders = ['X-Frame-Options', 'X-Content-Type-Options', 'Strict-Transport-Security'];
+      for (const header of missingHeaders) {
+        if (!output.includes(header)) {
+          findings.push({
+            type: 'missing-header',
+            severity: 'medium',
+            title: `Missing security header: ${header}`,
+            description: `The ${header} header is not set`,
+            remediation: `Add ${header} header to improve security`
+          });
+        }
+      }
+    } catch (error) {
+      logger.error('Failed to parse header output', { error });
+    }
+    return findings;
+  }
+
+  private parseSSLOutput(output: string): any[] {
+    const findings = [];
+    try {
+      if (output.includes('SSL_ERROR') || output.includes('TLS_ERROR')) {
+        findings.push({
+          type: 'ssl-error',
+          severity: 'high',
+          title: 'SSL/TLS Configuration Error',
+          description: 'SSL/TLS is misconfigured or using weak protocols'
+        });
+      }
+    } catch (error) {
+      logger.error('Failed to parse SSL output', { error });
+    }
+    return findings;
+  }
+
+  private parseSQLiOutput(output: string): any[] {
+    const findings = [];
+    try {
+      if (output.includes('vulnerable') || output.includes('injectable')) {
+        findings.push({
+          type: 'sql-injection',
+          severity: 'critical',
+          title: 'SQL Injection Vulnerability',
+          description: 'The application is vulnerable to SQL injection attacks',
+          owaspCategory: 'A03:2021',
+          remediation: 'Use parameterized queries and input validation'
+        });
+      }
+    } catch (error) {
+      logger.error('Failed to parse SQLi output', { error });
+    }
+    return findings;
+  }
+
+  private parseXSSOutput(output: string): any[] {
+    const findings = [];
+    try {
+      if (output.includes('XSS') || output.includes('cross-site scripting')) {
+        findings.push({
+          type: 'xss',
+          severity: 'high',
+          title: 'Cross-Site Scripting (XSS) Vulnerability',
+          description: 'The application is vulnerable to XSS attacks',
+          owaspCategory: 'A03:2021',
+          remediation: 'Implement proper input validation and output encoding'
+        });
+      }
+    } catch (error) {
+      logger.error('Failed to parse XSS output', { error });
+    }
+    return findings;
+  }
+
+  private parseJWTOutput(output: string): any[] {
+    const findings = [];
+    try {
+      if (output.includes('alg":"none"')) {
+        findings.push({
+          type: 'jwt-none-algorithm',
+          severity: 'critical',
+          title: 'JWT None Algorithm Vulnerability',
+          description: 'JWT accepts "none" algorithm, allowing token forgery',
+          owaspCategory: 'A02:2021'
+        });
+      }
+      if (output.includes('weak key')) {
+        findings.push({
+          type: 'jwt-weak-key',
+          severity: 'high',
+          title: 'Weak JWT Signing Key',
+          description: 'JWT is signed with a weak or predictable key',
+          owaspCategory: 'A02:2021'
+        });
+      }
+    } catch (error) {
+      logger.error('Failed to parse JWT output', { error });
+    }
+    return findings;
+  }
+
+  private parseAPIFuzzOutput(output: string): any[] {
+    const findings = [];
+    try {
+      // Generic API fuzzing result parser
+      if (output.includes('500 Internal Server Error')) {
+        findings.push({
+          type: 'api-error',
+          severity: 'medium',
+          title: 'API Error Handling Issue',
+          description: 'API returns server errors on invalid input'
+        });
+      }
+    } catch (error) {
+      logger.error('Failed to parse API fuzz output', { error });
+    }
+    return findings;
+  }
+
+  public getAvailableTools(): string[] {
+    return Array.from(this.tools.keys());
+  }
+
+  public getToolDefinition(toolName: string): ToolDefinition | undefined {
+    return this.tools.get(toolName);
+  }
+
+  public getQueueStatus(): { queued: number; active: number; maxConcurrent: number } {
+    return {
+      queued: this.executionQueue.length,
+      active: this.currentExecutions,
+      maxConcurrent: this.maxConcurrent
+    };
+  }
+}

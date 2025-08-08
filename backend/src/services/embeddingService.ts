@@ -55,6 +55,32 @@ export class EmbeddingService {
   }
 
   /**
+   * Initialize the embedding service
+   */
+  async initialize(): Promise<void> {
+    logger.info('Initializing embedding service', { 
+      url: this.config.embeddingApiUrl,
+      model: this.config.modelName 
+    });
+    
+    // Test connection to embedding service
+    if (this.config.embeddingApiUrl.includes('openai.com')) {
+      logger.info('Using OpenAI embedding service');
+    } else {
+      // Test local service if not using OpenAI
+      try {
+        await axios.get(this.config.embeddingApiUrl.replace('/api/embeddings', '/api/tags'), {
+          timeout: 3000 // 3 second timeout
+        });
+        logger.info('Local embedding service is available');
+      } catch (error) {
+        logger.error('Embedding service not available', { error });
+        throw new Error('Embedding service is not available');
+      }
+    }
+  }
+
+  /**
    * Generate embedding for given text
    */
   private async generateEmbedding(text: string): Promise<number[]> {
@@ -72,8 +98,14 @@ export class EmbeddingService {
         ? { input: text, model: this.config.modelName }
         : { model: this.config.modelName, prompt: text };
 
+      logger.info('Making embedding API request', { 
+        url: this.config.embeddingApiUrl,
+        hasApiKey: !!headers.Authorization,
+        textLength: text.length 
+      });
+      
       const response = await axios.post(this.config.embeddingApiUrl, data, {
-        timeout: 30000,
+        timeout: 10000, // Reduced to 10 seconds
         headers
       });
 
@@ -92,16 +124,23 @@ export class EmbeddingService {
       if (axios.isAxiosError(error)) {
         logger.error('Embedding API error', {
           status: error.response?.status,
-          message: error.message
+          message: error.message,
+          data: error.response?.data,
+          url: this.config.embeddingApiUrl
         });
+        
+        // Specific error for authentication issues
+        if (error.response?.status === 401) {
+          throw new Error('OpenAI API authentication failed. Please check your API key.');
+        }
+        
+        // Specific error for timeout
+        if (error.code === 'ECONNABORTED') {
+          throw new Error('OpenAI API request timed out after 10 seconds');
+        }
       }
       
-      // Return mock embedding for development
-      if (process.env.NODE_ENV === 'development' || process.env.MOCK_EMBEDDINGS === 'true') {
-        logger.warn('Using mock embedding');
-        return this.generateMockEmbedding(text);
-      }
-      
+      // Always throw error if embedding generation fails
       throw error;
     }
   }
@@ -128,8 +167,9 @@ export class EmbeddingService {
   async getEmbedding(text: string): Promise<number[]> {
     // Add grounding for security context
     const grounding = groundingService.fetch('security');
-    const ragText = await this.appendRAGContext(text);
-    const enrichedText = `${text}\n\nContext:\n${grounding}\n\nHistorical context:\n${ragText}`;
+    // DISABLED: RAG context to prevent infinite loop when database is not configured
+    // const ragText = await this.appendRAGContext(text);
+    const enrichedText = `${text}\n\nContext:\n${grounding}`;
 
     // Check cache first
     if (this.config.cacheResults) {

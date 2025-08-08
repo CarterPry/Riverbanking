@@ -1,0 +1,9 @@
+{
+  "target": "sweetspotgov.com",
+  "userIntent": "Perform a comprehensive enumeration scan on sweetspotgov.com. I want you to: 1) Enumerate ALL subdomains, 2) Scan all discovered subdomains for open ports and services, 3) Identify all directories and endpoints, 4) Discover all API endpoints, 5) Fingerprint all technologies in use. Focus on thorough discovery before moving to vulnerability testing.",
+  "constraints": {
+    "environment": "development",
+    "timeLimit": 1800000,
+    "scope": ["sweetspotgov.com", "*.sweetspotgov.com"]
+  }
+}

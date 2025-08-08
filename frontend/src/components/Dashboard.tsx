@@ -35,6 +35,23 @@ import {
 import { connect, WebSocketMessage } from '../utils/websocket';
 import apiService from '../services/apiService';
 
+interface LogEntry {
+  id: string;
+  level: 'info' | 'warning' | 'error' | 'success' | 'debug';
+  category: 'workflow' | 'attack' | 'command' | 'system';
+  message: string;
+  data?: any;
+  timestamp: string;
+}
+
+interface AttackProgress {
+  attackId: string;
+  name: string;
+  progress: number;
+  message: string;
+  startTime: number;
+}
+
 interface DashboardState {
   progress: string;
   score: number;
@@ -47,6 +64,8 @@ interface DashboardState {
   requiresAuth?: boolean;
   requiresHITL?: boolean;
   hitlReasons?: string[];
+  logs: LogEntry[];
+  activeAttacks: Record<string, AttackProgress>;
 }
 
 function Dashboard({ workflowId }: { workflowId?: string }) {
@@ -62,7 +81,9 @@ function Dashboard({ workflowId }: { workflowId?: string }) {
     phase: 'starting',
     attacks: 0,
     findings: [],
-    status: 'idle'
+    status: 'idle',
+    logs: [],
+    activeAttacks: {}
   });
   const [wsError, setWsError] = useState<string | null>(null);
   const [showAuthDialog, setShowAuthDialog] = useState(false);
@@ -202,6 +223,66 @@ function Dashboard({ workflowId }: { workflowId?: string }) {
               status: 'error',
               progress: msg.data?.message || 'An error occurred'
             }));
+            break;
+            
+          case 'log':
+            setState(prev => ({
+              ...prev,
+              logs: [...prev.logs, {
+                id: `${msg.timestamp}-${Math.random()}`,
+                level: msg.level || 'info',
+                category: msg.category || 'system',
+                message: msg.data?.message || '',
+                data: msg.data,
+                timestamp: msg.timestamp
+              }]
+            }));
+            break;
+            
+          case 'attack:start':
+            const attackId = msg.data?.attackId || msg.data?.tool;
+            setState(prev => ({
+              ...prev,
+              activeAttacks: {
+                ...prev.activeAttacks,
+                [attackId]: {
+                  attackId,
+                  name: msg.data?.tool || 'Security Scan',
+                  progress: 0,
+                  message: 'Starting...',
+                  startTime: Date.now()
+                }
+              }
+            }));
+            break;
+            
+          case 'attack:progress':
+          case 'tool:progress':
+            const progressId = msg.data?.attackId || msg.data?.containerId;
+            if (progressId) {
+              setState(prev => ({
+                ...prev,
+                activeAttacks: {
+                  ...prev.activeAttacks,
+                  [progressId]: {
+                    ...prev.activeAttacks[progressId],
+                    progress: msg.data?.progress || 0,
+                    message: msg.data?.message || `Scanning... ${msg.data?.progress || 0}%`
+                  }
+                }
+              }));
+            }
+            break;
+            
+          case 'attack:complete':
+            const completeId = msg.data?.attackId || msg.data?.tool;
+            setState(prev => {
+              const { [completeId]: removed, ...remaining } = prev.activeAttacks;
+              return {
+                ...prev,
+                activeAttacks: remaining
+              };
+            });
             break;
             
           case 'connected':
@@ -463,6 +544,170 @@ function Dashboard({ workflowId }: { workflowId?: string }) {
               </Box>
             ) : (
               <Typography color="primary">Test Running - Phase: {state.phase}</Typography>
+            )}
+          </Paper>
+        </Grid>
+
+        {/* Active Attacks */}
+        {Object.keys(state.activeAttacks).length > 0 && (
+          <Grid item xs={12}>
+            <Paper sx={{ p: 3 }}>
+              <Typography variant="h6" gutterBottom>
+                Active Security Scans
+              </Typography>
+              <Box sx={{ mt: 2 }}>
+                {Object.values(state.activeAttacks).map((attack) => {
+                  const elapsedSeconds = Math.floor((Date.now() - attack.startTime) / 1000);
+                  const minutes = Math.floor(elapsedSeconds / 60);
+                  const seconds = elapsedSeconds % 60;
+                  const timeDisplay = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+                  
+                  return (
+                    <Box key={attack.attackId} sx={{ mb: 3 }}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                        <Typography variant="body2" fontWeight="medium">
+                          {attack.name}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          {timeDisplay} - {attack.progress}%
+                        </Typography>
+                      </Box>
+                      <LinearProgress 
+                        variant="determinate" 
+                        value={attack.progress} 
+                        sx={{ height: 6, borderRadius: 3 }}
+                      />
+                      <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
+                        {attack.message}
+                      </Typography>
+                    </Box>
+                  );
+                })}
+              </Box>
+            </Paper>
+          </Grid>
+        )}
+
+        {/* Activity Logs */}
+        <Grid item xs={12}>
+          <Paper sx={{ p: 3, maxHeight: 400, overflow: 'auto' }}>
+            <Typography variant="h6" gutterBottom>
+              Activity Logs
+            </Typography>
+            {state.logs.length > 0 ? (
+              <List dense sx={{ bgcolor: 'grey.50', borderRadius: 1, p: 1 }}>
+                {state.logs.map(log => (
+                  <ListItem 
+                    key={log.id} 
+                    sx={{ 
+                      py: 0.5, 
+                      borderLeft: `3px solid ${
+                        log.level === 'error' ? '#f44336' :
+                        log.level === 'warning' ? '#ff9800' :
+                        log.level === 'success' ? '#4caf50' :
+                        log.level === 'debug' ? '#9e9e9e' :
+                        '#2196f3'
+                      }`,
+                      mb: 0.5,
+                      bgcolor: 'background.paper',
+                      borderRadius: '0 4px 4px 0'
+                    }}
+                  >
+                    <ListItemText
+                      primary={
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Typography 
+                            variant="caption" 
+                            sx={{ 
+                              color: 'text.secondary',
+                              fontFamily: 'monospace',
+                              minWidth: 80
+                            }}
+                          >
+                            {new Date(log.timestamp).toLocaleTimeString()}
+                          </Typography>
+                          <Chip 
+                            label={log.category} 
+                            size="small" 
+                            sx={{ height: 20, fontSize: '0.7rem' }}
+                            color={
+                              log.category === 'command' ? 'secondary' :
+                              log.category === 'attack' ? 'primary' :
+                              'default'
+                            }
+                          />
+                          <Typography variant="body2">
+                            {log.message}
+                          </Typography>
+                        </Box>
+                      }
+                      secondary={
+                        log.data?.command ? (
+                          <Box sx={{ mt: 0.5 }}>
+                            <Typography 
+                              variant="caption" 
+                              component="pre" 
+                              sx={{ 
+                                fontFamily: 'monospace',
+                                bgcolor: 'grey.100',
+                                p: 1,
+                                borderRadius: 1,
+                                overflow: 'auto'
+                              }}
+                            >
+                              {log.data.command}
+                            </Typography>
+                            {log.data.rawOutput && (
+                              <details style={{ marginTop: '8px' }}>
+                                <summary style={{ cursor: 'pointer', fontSize: '0.8rem' }}>
+                                  Show Output
+                                </summary>
+                                <Typography 
+                                  variant="caption" 
+                                  component="pre" 
+                                  sx={{ 
+                                    fontFamily: 'monospace',
+                                    bgcolor: 'grey.100',
+                                    p: 1,
+                                    borderRadius: 1,
+                                    overflow: 'auto',
+                                    maxHeight: 200
+                                  }}
+                                >
+                                  {log.data.rawOutput}
+                                </Typography>
+                              </details>
+                            )}
+                          </Box>
+                        ) : log.data?.findings && log.data.findings.length > 0 ? (
+                          <Box sx={{ mt: 0.5 }}>
+                            {log.data.findings.map((finding: any, idx: number) => (
+                              <Alert 
+                                key={idx} 
+                                severity={
+                                  finding.severity === 'critical' ? 'error' :
+                                  finding.severity === 'high' ? 'error' :
+                                  finding.severity === 'medium' ? 'warning' :
+                                  'info'
+                                }
+                                sx={{ mb: 0.5 }}
+                              >
+                                <Typography variant="caption">
+                                  {finding.description || finding.type}
+                                </Typography>
+                              </Alert>
+                            ))}
+                          </Box>
+                        ) : null
+                      }
+                    />
+                  </ListItem>
+                ))}
+              </List>
+            ) : (
+              <Typography variant="body2" color="text.secondary">
+                Waiting for activity...
+              </Typography>
             )}
           </Paper>
         </Grid>

@@ -140,6 +140,8 @@ export class ToolHandler {
     const containerConfig = {
       image: tool.containerImage || 'kalilinux/kali-rolling',
       command,
+      name: `soc2-test-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+      workflowId: options.workflowId,
       volumes: {
         [outputDir]: '/output'
       },
@@ -151,15 +153,36 @@ export class ToolHandler {
       }
     };
 
-            if (process.env.MOCK_DOCKER === 'true' || process.env.NODE_ENV === 'development') {
+            if (process.env.MOCK_DOCKER === 'true') {
       // Mock execution for testing
       logger.info('Mock Docker execution', { tool: tool.name, command });
+      
+      // Emit command execution event
+      const commandDetails = {
+        workflowId: workflowId || 'unknown',
+        attackId: attackId || 'unknown',
+        tool: tool.name,
+        command: command.join(' '),
+        container: tool.container,
+        timestamp: new Date().toISOString()
+      };
+      
+      // Emit globally so it can be caught by the server
+      process.emit('workflow:command:execute' as any, commandDetails);
+      
+      // Add realistic delays based on tool type
+      const executionTime = this.getRealisticExecutionTime(tool);
+      logger.info(`Simulating ${tool.name} execution for ${executionTime}ms`);
+      
+      // Simulate progressive output
+      await this.simulateProgressiveExecution(tool, workflowId, attackId, executionTime);
+      
       return {
         output: this.generateMockOutput(tool),
         exitCode: 0,
         metrics: {
-          cpuUsage: Math.random() * 100,
-          memoryUsage: Math.random() * 1024 * 1024 * 1024
+          cpuUsage: 20 + Math.random() * 60, // 20-80% CPU
+          memoryUsage: 512 * 1024 * 1024 + Math.random() * 512 * 1024 * 1024 // 512MB-1GB
         }
       };
     }
@@ -220,18 +243,108 @@ export class ToolHandler {
   }
 
   /**
+   * Get realistic execution time for a tool
+   */
+  private getRealisticExecutionTime(tool: SecurityTool): number {
+    const executionTimes: Record<string, [number, number]> = {
+      'port-scanning': [15000, 30000], // 15-30 seconds
+      'xss-detection': [8000, 15000], // 8-15 seconds
+      'blind-sql-injection': [10000, 20000], // 10-20 seconds
+      'clickjacking': [2000, 5000], // 2-5 seconds
+      'ssl-tls-analysis': [5000, 10000], // 5-10 seconds
+      'authentication-brute-force': [20000, 40000], // 20-40 seconds
+      'data-validation': [5000, 12000], // 5-12 seconds
+      'session-token-analysis': [8000, 15000], // 8-15 seconds
+      'privilege-escalation': [12000, 25000], // 12-25 seconds
+      'api-security-scan': [10000, 18000] // 10-18 seconds
+    };
+    
+    const [min, max] = executionTimes[tool.name] || [5000, 10000];
+    return Math.floor(Math.random() * (max - min) + min);
+  }
+
+  /**
+   * Simulate progressive execution with status updates
+   */
+  private async simulateProgressiveExecution(
+    tool: SecurityTool,
+    workflowId: string,
+    attackId: string,
+    totalTime: number
+  ): Promise<void> {
+    const updates = [
+      { percent: 10, message: 'Initializing tool...' },
+      { percent: 25, message: 'Scanning target...' },
+      { percent: 50, message: 'Analyzing results...' },
+      { percent: 75, message: 'Generating report...' },
+      { percent: 90, message: 'Finalizing...' }
+    ];
+    
+    for (const update of updates) {
+      await new Promise(resolve => setTimeout(resolve, (totalTime * update.percent) / 100));
+      
+      // Emit progress update
+      process.emit('workflow:tool:progress' as any, {
+        workflowId,
+        attackId,
+        tool: tool.name,
+        progress: update.percent,
+        message: update.message,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Wait for remaining time
+    await new Promise(resolve => setTimeout(resolve, totalTime * 0.1));
+  }
+
+  /**
    * Mock output generation for testing
    */
   private generateMockOutput(tool: SecurityTool): string {
-    const mockOutputs: Record<string, string> = {
-      'port-scanning': 'PORT     STATE SERVICE\n22/tcp   open  ssh\n80/tcp   open  http\n443/tcp  open  https',
-      'xss-detection': '{"alerts":[{"risk":"High","confidence":"Medium","url":"http://example.com/search","parameter":"q","attack":"<script>alert(1)</script>"}]}',
-      'blind-sql-injection': '[INFO] found SQL injection on parameter "id"\n[INFO] payload: id=1\' AND 5678=5678-- ',
-      'clickjacking': 'X-Frame-Options header is not present',
-      'ssl-tls-analysis': '{"vulnerabilities":[{"id":"LUCKY13","severity":"LOW","finding":"potentially vulnerable"}]}'
+    const mockOutputs: Record<string, () => string> = {
+      'port-scanning': () => {
+        const ports = [22, 80, 443, 3306, 5432, 8080, 8443];
+        const openPorts = ports.filter(() => Math.random() > 0.6);
+        let output = 'PORT     STATE SERVICE\n';
+        openPorts.forEach(port => {
+          const service = {
+            22: 'ssh', 80: 'http', 443: 'https', 
+            3306: 'mysql', 5432: 'postgresql',
+            8080: 'http-proxy', 8443: 'https-alt'
+          }[port] || 'unknown';
+          output += `${port}/tcp   open  ${service}\n`;
+        });
+        return output;
+      },
+      'xss-detection': () => {
+        const hasVuln = Math.random() > 0.7;
+        if (hasVuln) {
+          return '{"alerts":[{"risk":"High","confidence":"Medium","url":"http://example.com/search","parameter":"q","attack":"<script>alert(1)</script>"}]}';
+        }
+        return '{"alerts":[]}';
+      },
+      'blind-sql-injection': () => {
+        const hasVuln = Math.random() > 0.8;
+        if (hasVuln) {
+          return '[INFO] found SQL injection on parameter "id"\n[INFO] payload: id=1\' AND 5678=5678-- ';
+        }
+        return '[INFO] No SQL injection vulnerabilities found';
+      },
+      'clickjacking': () => {
+        const hasHeader = Math.random() > 0.5;
+        return hasHeader ? 'X-Frame-Options header is present' : 'X-Frame-Options header is not present';
+      },
+      'ssl-tls-analysis': () => {
+        const vulnerabilities = [];
+        if (Math.random() > 0.7) vulnerabilities.push({"id":"LUCKY13","severity":"LOW","finding":"potentially vulnerable"});
+        if (Math.random() > 0.8) vulnerabilities.push({"id":"BEAST","severity":"MEDIUM","finding":"vulnerable"});
+        return JSON.stringify({ vulnerabilities });
+      }
     };
 
-    return mockOutputs[tool.name] || 'No vulnerabilities found';
+    const generator = mockOutputs[tool.name];
+    return generator ? generator() : 'No vulnerabilities found';
   }
 
   /**

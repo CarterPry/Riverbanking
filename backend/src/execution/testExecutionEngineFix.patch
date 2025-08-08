@@ -1,0 +1,246 @@
+// Patch for testExecutionEngine.ts to use dockerTools.ts
+
+// Add this import at the top
+import { getDockerTool, isToolAvailable } from './dockerTools.js';
+
+// Replace the runInDocker method with this improved version:
+private async runInDocker(image: string, command: string, timeout: number = 300000): Promise<string> {
+  try {
+    // First, try to pull the image if it doesn't exist
+    try {
+      await this.docker.getImage(image).inspect();
+    } catch (error) {
+      logger.info('Pulling Docker image', { image });
+      const stream = await this.docker.pull(image);
+      await new Promise((resolve, reject) => {
+        this.docker.modem.followProgress(stream, (err, res) => err ? reject(err) : resolve(res));
+      });
+    }
+
+    // Parse command properly - handle both string and array
+    const cmd = Array.isArray(command) ? command : command.split(' ').filter(c => c);
+
+    const container = await this.docker.createContainer({
+      Image: image,
+      Cmd: cmd,
+      HostConfig: {
+        AutoRemove: true,
+        Memory: 512 * 1024 * 1024, // 512MB
+        CpuQuota: 50000, // 50% CPU
+        SecurityOpt: ['no-new-privileges'],
+        ReadonlyRootfs: false,
+        NetworkMode: 'bridge'
+      }
+    });
+
+    const stream = await container.attach({ stream: true, stdout: true, stderr: true });
+    await container.start();
+
+    let output = '';
+    let stderr = '';
+    let timeoutHandle: NodeJS.Timeout;
+
+    return new Promise((resolve, reject) => {
+      // Set timeout
+      timeoutHandle = setTimeout(async () => {
+        try {
+          await container.kill();
+        } catch (e) {
+          // Container might already be stopped
+        }
+        reject(new Error('Execution timeout'));
+      }, timeout);
+
+      // Better stream handling
+      container.modem.demuxStream(stream, 
+        // stdout
+        (chunk) => { output += chunk.toString(); },
+        // stderr
+        (chunk) => { stderr += chunk.toString(); }
+      );
+
+      stream.on('end', async () => {
+        clearTimeout(timeoutHandle);
+        
+        try {
+          const info = await container.inspect();
+          if (info.State.ExitCode !== 0) {
+            logger.error('Container execution failed', { 
+              exitCode: info.State.ExitCode, 
+              stderr,
+              output: output.substring(0, 500)
+            });
+            reject(new Error(`Container exited with code ${info.State.ExitCode}: ${stderr}`));
+          } else {
+            resolve(output || stderr); // Return output or stderr if no stdout
+          }
+        } catch (error) {
+          // Container might be removed already
+          resolve(output || stderr);
+        }
+      });
+
+      stream.on('error', (error) => {
+        clearTimeout(timeoutHandle);
+        reject(error);
+      });
+    });
+  } catch (error) {
+    logger.error('Docker execution failed', { 
+      image, 
+      command: command.substring(0, 100),
+      error: error instanceof Error ? error.message : String(error)
+    });
+    throw error;
+  }
+}
+
+// Update the executeRequest method to use dockerTools:
+private async executeRequest(request: ExecutionRequest): Promise<void> {
+  const execution = Array.from(this.activeExecutions.values()).find(
+    e => e.request === request
+  );
+  
+  if (!execution) {
+    logger.error('Execution not found for request');
+    return;
+  }
+
+  const { requestId, tool, startTime, resolve } = execution;
+
+  try {
+    // Check if we have a docker tool definition
+    const dockerTool = getDockerTool(tool.name);
+    
+    let command: string | string[];
+    let dockerImage: string;
+    
+    if (dockerTool) {
+      // Use the docker tool definition
+      dockerImage = dockerTool.image;
+      command = dockerTool.command(request.parameters.target, request.parameters);
+    } else {
+      // Fall back to tool definition
+      dockerImage = tool.dockerImage;
+      
+      // Build command with parameters
+      command = tool.command;
+      for (const param of tool.parameters) {
+        const value = request.parameters[param.name] || param.default;
+        if (param.required && !value) {
+          throw new Error(`Missing required parameter: ${param.name}`);
+        }
+        if (value !== undefined) {
+          command = command.replace(`{{${param.name}}}`, value);
+        }
+      }
+    }
+
+    logger.info('Executing tool', {
+      requestId,
+      tool: tool.name,
+      dockerImage,
+      command: Array.isArray(command) ? command.join(' ') : command
+    });
+
+    this.emit('execution:start', {
+      requestId,
+      tool: tool.name,
+      workflowId: request.workflowId
+    });
+
+    // Execute in Docker container
+    const output = await this.runInDocker(
+      dockerImage, 
+      Array.isArray(command) ? command.join(' ') : command,
+      request.timeout || tool.timeout
+    );
+    
+    // Parse output
+    const findings = tool.outputParser(output);
+    
+    const endTime = new Date();
+    const result: ExecutionResult = {
+      requestId,
+      tool: tool.name,
+      status: 'success',
+      startTime,
+      endTime,
+      duration: endTime.getTime() - startTime.getTime(),
+      output,
+      findings,
+      metadata: {
+        dockerImage,
+        command: Array.isArray(command) ? command.join(' ').substring(0, 100) + '...' : command.substring(0, 100) + '...',
+        parametersUsed: Object.keys(request.parameters)
+      }
+    };
+
+    logger.info('Tool execution completed', {
+      requestId,
+      tool: tool.name,
+      findingsCount: findings.length,
+      duration: result.duration
+    });
+
+    this.emit('execution:complete', {
+      requestId,
+      tool: tool.name,
+      workflowId: request.workflowId,
+      findings: findings.length
+    });
+
+    // Log to decision logger
+    await this.decisionLogger.logDecision({
+      workflowId: request.workflowId,
+      decisionType: 'test-selection',
+      input: {
+        tool: tool.name,
+        parameters: request.parameters
+      },
+      output: {
+        decision: 'executed',
+        reasoning: `Executed ${tool.name} successfully`,
+        confidence: 1.0
+      },
+      metadata: {
+        model: 'execution-engine',
+        tool: tool.name,
+        latency: result.duration
+      }
+    });
+
+    resolve(result);
+  } catch (error) {
+    const endTime = new Date();
+    const result: ExecutionResult = {
+      requestId,
+      tool: tool.name,
+      status: 'failed',
+      startTime,
+      endTime,
+      duration: endTime.getTime() - startTime.getTime(),
+      error: error instanceof Error ? error.message : String(error)
+    };
+
+    logger.error('Tool execution failed', {
+      requestId,
+      tool: tool.name,
+      error: error instanceof Error ? { 
+        message: error.message,
+        stack: error.stack 
+      } : String(error)
+    });
+
+    this.emit('execution:failed', {
+      requestId,
+      tool: tool.name,
+      workflowId: request.workflowId,
+      error: result.error
+    });
+
+    resolve(result);
+  } finally {
+    this.activeExecutions.delete(requestId);
+  }
+}
