@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Normalize KR output lines into NDJSON. KR often emits lines like:
+#   200 123ms GET /v1/users
+# Some builds separate fields with spaces instead of tabs.
+kr "$@" 2>&1 | awk '
+  BEGIN{FS="[\t ]+"}
+  /^[0-9]{3}[\t ]+/ {
+    status=$1; ms=$2; method=$3;
+    # Path may contain spaces if weird, rebuild from $4..end
+    path=$4; for(i=5;i<=NF;i++){ path=path" "$i }
+    gsub(/ms$/,"",ms);
+    printf("{\"tool\":\"kiterunner\",\"status\":%s,\"latency_ms\":%s,\"method\":\"%s\",\"path\":\"%s\"}\n",status,ms,method,path);
+  }'
+

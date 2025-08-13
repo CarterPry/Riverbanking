@@ -30,9 +30,9 @@ function Form() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [formData, setFormData] = useState<FormData>({
-    target: '',
-    scope: '',
-    description: '',
+    target: 'https://sweetspotgov.com',
+    scope: 'comprehensive',
+    description: 'I want you to test against all subdomains and dirs. Test all access, things like SQL injection, sending JWT tokens, catching any leaky APIs, etc. Use exhaustive recon and OSINT first.',
     username: '',
     password: '',
     testType: 'comprehensive'
@@ -91,7 +91,7 @@ function Form() {
               required
               name="target"
               label="Target URL"
-              placeholder="https://example.com"
+              placeholder="https://sweetspotgov.com"
               value={formData.target}
               onChange={handleChange}
               helperText="The URL of the application to test"
@@ -119,7 +119,7 @@ function Form() {
               rows={3}
               name="description"
               label="Test Description"
-              placeholder="Describe the purpose and context of this security test"
+               placeholder="I want you to test against all subdomains and dirs..."
               value={formData.description}
               onChange={handleChange}
             />

@@ -3,6 +3,21 @@
  * Demonstrates true AI-driven progressive security testing
  */
 
+import dotenv from 'dotenv';
+import path from 'path';
+
+// Load environment variables from .env file
+// When running from backend directory, .env is in parent directory
+const envPath = path.resolve(process.cwd(), '..', '.env');
+console.log('Loading env from:', envPath);
+dotenv.config({ path: envPath });
+
+// Verify the API key is loaded
+console.log('ANTHROPIC_API_KEY loaded:', !!process.env.ANTHROPIC_API_KEY);
+if (!process.env.ANTHROPIC_API_KEY) {
+  console.error('ANTHROPIC_API_KEY not found after loading .env');
+}
+
 import { AIOrchestrator } from '../orchestration/aiOrchestrator.js';
 import { EnhancedWebSocketManager } from '../websocket/enhancedWebSocketManager.js';
 import { createLogger } from '../utils/logger.js';
@@ -13,15 +28,15 @@ export async function runSweetspotSecurityTest() {
   logger.info('Starting Sweetspot security test scenario');
   
   // Initialize components
-  const websocketManager = new EnhancedWebSocketManager(null, { path: '/ws' });
-  const orchestrator = new AIOrchestrator(websocketManager);
+  // For test scenario, we don't need WebSocket updates
+  const orchestrator = new AIOrchestrator();
   
   // Define the test request based on user intent
   const testRequest = {
-    target: 'sweetspotgov.com',
+    target: 'https://www.sweetspotgov.com',
     userIntent: 'I want you to test against all subdomains and dirs. Test all access, stuff like sql injection, sending JWT tokens, catching any leaky apis stuff like this.',
     constraints: {
-      environment: 'production',
+      environment: 'production' as 'production',
       timeLimit: 3600000, // 1 hour
       scope: [
         'sweetspotgov.com',
@@ -95,7 +110,14 @@ export async function runSweetspotSecurityTest() {
     return result;
     
   } catch (error) {
-    logger.error('Security test failed', { error });
+    logger.error('Security test failed', { 
+      error: error instanceof Error ? {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      } : error 
+    });
+    console.error('Full error:', error);
     throw error;
   }
 }
@@ -127,14 +149,23 @@ not from a pre-defined template!
 */
 
 // Run the test if this file is executed directly
-if (import.meta.url === `file://${process.argv[1]}`) {
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore Node CJS guard for direct execution without ESM module flag
+if ((global as any).process?.argv?.[1] && __filename === process.argv[1]) {
   runSweetspotSecurityTest()
     .then(() => {
       logger.info('Test scenario completed successfully');
       process.exit(0);
     })
     .catch((error) => {
-      logger.error('Test scenario failed', { error });
+      logger.error('Test scenario failed', { 
+        error: error instanceof Error ? {
+          message: error.message,
+          stack: error.stack,
+          name: error.name
+        } : error 
+      });
+      console.error('Main catch - Full error:', error);
       process.exit(1);
     });
 }

@@ -1,0 +1,106 @@
+{
+  "tools": [
+    {
+      "tool": "directory-bruteforce",
+      "allowedParameters": ["target", "wordlist", "rateLimit"],
+      "requiredParameters": ["target"],
+      "defaults": { "wordlist": "/seclists/Discovery/Web-Content/common.txt" },
+      "outputFormat": "ndjson",
+      "maxTimeoutMs": 300000,
+      "allowedFlags": ["-u", "-w", "-mc", "-fc", "-ac", "-o", "-of", "-t", "-rate", "-timeout", "-maxtime", "-recursion"],
+      "defaultArgv": ["-of", "json"]
+    },
+    {
+      "tool": "api-discovery",
+      "allowedParameters": ["target", "wordlist", "rateLimit"],
+      "requiredParameters": ["target"],
+      "defaults": { "wordlist": "/seclists/Discovery/Web-Content/api/api-endpoints.txt" },
+      "outputFormat": "ndjson",
+      "maxTimeoutMs": 300000,
+      "allowedFlags": ["-w", "-q", "-A"],
+      "defaultArgv": ["brute"]
+    },
+    {
+      "tool": "parameter-discovery",
+      "allowedParameters": ["target"],
+      "requiredParameters": ["target"],
+      "defaults": {},
+      "outputFormat": "json",
+      "maxTimeoutMs": 180000,
+      "allowedFlags": ["-u", "-oJ", "-T", "-m", "--stable", "--disable-redirects"],
+      "defaultArgv": ["--stable", "--disable-redirects", "-T", "20", "-m", "GET", "-oJ", "-"]
+    },
+    {
+      "tool": "waf-detection",
+      "allowedParameters": ["target"],
+      "requiredParameters": ["target"],
+      "defaults": {},
+      "outputFormat": "text",
+      "maxTimeoutMs": 120000,
+      "allowedFlags": ["-a"],
+      "defaultArgv": []
+    },
+    {
+      "tool": "jwt-analyzer",
+      "allowedParameters": ["target", "token"],
+      "requiredParameters": ["target"],
+      "defaults": {},
+      "outputFormat": "text",
+      "maxTimeoutMs": 120000,
+      "allowedFlags": ["-M", "-t", "-C", "-h"],
+      "defaultArgv": []
+    },
+    {
+      "tool": "port-scanner",
+      "allowedParameters": ["target", "ports"],
+      "requiredParameters": ["target"],
+      "defaults": {},
+      "outputFormat": "xml",
+      "maxTimeoutMs": 300000,
+      "allowedFlags": ["-sV", "-Pn", "--top-ports", "-T4", "-oX"],
+      "defaultArgv": ["-sV", "-Pn", "--top-ports", "1000", "-T4", "-oX", "-"]
+    },
+    {
+      "tool": "tech-fingerprint",
+      "allowedParameters": ["target"],
+      "requiredParameters": ["target"],
+      "defaults": {},
+      "outputFormat": "jsonl",
+      "maxTimeoutMs": 60000,
+      "allowedFlags": ["-u", "-tech-detect", "-json", "-jsonl", "-silent"],
+      "defaultArgv": ["-json", "-silent"]
+    },
+    {
+      "tool": "crawler",
+      "allowedParameters": ["target", "depth"],
+      "requiredParameters": ["target"],
+      "defaults": {"depth": 3},
+      "outputFormat": "jsonl",
+      "maxTimeoutMs": 120000,
+      "allowedFlags": ["-u", "-jsonl", "-silent", "-d", "-js-crawl", "-known-files"],
+      "defaultArgv": ["-jsonl", "-silent"]
+    },
+    {
+      "tool": "vulnerability-scanner",
+      "allowedParameters": ["target"],
+      "requiredParameters": ["target"],
+      "defaults": {},
+      "outputFormat": "jsonl",
+      "maxTimeoutMs": 300000,
+      "allowedFlags": ["-u", "-severity", "-timeout", "-retries", "-rl", "-jsonl", "-silent"],
+      "defaultArgv": ["-severity", "critical,high,medium", "-timeout", "15", "-retries", "0", "-rl", "50", "-jsonl", "-silent"]
+    },
+    {
+      "tool": "api-fuzzer",
+      "allowedParameters": ["target", "wordlist"],
+      "requiredParameters": ["target"],
+      "defaults": {"wordlist": "/seclists/Discovery/Web-Content/api/api-endpoints.txt"},
+      "outputFormat": "ndjson",
+      "maxTimeoutMs": 300000,
+      "allowedFlags": ["-w", "-q", "-A"],
+      "defaultArgv": ["brute"]
+    }
+  ]
+}
+
+

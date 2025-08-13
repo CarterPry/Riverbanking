@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+OUT_DIR="${OUT_DIR:-/out/sqlmap}"
+URL=""
+ARGS=()
+while [[ $# -gt 0 ]]; do case "$1" in -u) URL="$2"; shift 2;; *) ARGS+=("$1"); shift;; esac; done
+mkdir -p "$OUT_DIR"
+sqlmap -u "$URL" --batch --risk=1 --level=2 --random-agent --output-dir "$OUT_DIR" "${ARGS[@]}" 2>&1 | tee "$OUT_DIR/run.log" >/dev/null
+python3 - "$URL" "$OUT_DIR" <<'PY'
+import json, os, re, sys
+url, out = sys.argv[1], sys.argv[2]
+log = os.path.join(out, "run.log")
+inj = False; dbms=None
+try:
+    with open(log, 'r', errors='ignore') as f:
+        for line in f:
+            if "is vulnerable" in line: inj = True
+            m = re.search(r"back-end DBMS:\s*(.+)", line, re.I)
+            if m: dbms = m.group(1).strip()
+except Exception:
+    pass
+print(json.dumps({"tool":"sqlmap","url":url,"vulnerable":inj,"dbms":dbms}))
+PY
+

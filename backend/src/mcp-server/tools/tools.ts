@@ -164,6 +164,19 @@ export const tools: SecurityTool[] = [
     containerImage: 'projectdiscovery/subfinder:latest'
   },
   {
+    name: 'directory-bruteforce',
+    description: 'Discover hidden directories and files using SecLists',
+    command: ['ffuf', '-u', '{target}/FUZZ', '-w', '/seclists/Discovery/Web-Content/common.txt', '-mc', 'all', '-fc', '404', '-ac', '-of', 'json', '-o', '/tmp/ffuf.json'],
+    attackType: 'Content Discovery',
+    tsc: ['Security'],
+    cc: ['CC6.1', 'CC6.6'],
+    requiresAuth: false,
+    progressive: true,
+    evidenceRequired: ['discovered_paths'],
+    timeout: 300000,
+    containerImage: 'ffuf/ffuf:latest'
+  },
+  {
     name: 'directory-scanner',
     description: 'Discover hidden directories and files',
     command: ['gobuster', 'dir', '-u', '{target}', '-w', '/usr/share/wordlists/dirb/common.txt', '-x', 'php,html,js,txt,json,xml,bak,old,log,sql,zip,tar,gz', '-o', '/tmp/directories.txt', '-q'],

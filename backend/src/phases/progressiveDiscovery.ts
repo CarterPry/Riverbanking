@@ -1,4 +1,7 @@
 import { EventEmitter } from 'events';
+import * as fs from 'fs/promises';
+import * as path from 'path';
+import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
 import { StrategicAIService, AttackStrategy, AttackStep } from '../services/strategicAIService.js';
 import { createLogger } from '../utils/logger.js';
@@ -73,7 +76,39 @@ export class ProgressiveDiscovery extends EventEmitter {
     recon: {
       name: 'recon',
       displayName: 'Reconnaissance',
-      tools: ['subdomain-scanner', 'port-scanner', 'directory-scanner', 'tech-fingerprint', 'crawler'],
+      tools: [
+        'whois',
+        'crtsh-lookup',
+         'passive-dns',
+         'search-dorking',
+         'shodan-search',
+         'wayback-urls',
+         'company-registry',
+         'paste-search',
+        'bgpview-asn',
+        'dig-any',
+         'zone-transfer',
+        'robots-fetch',
+        'sitemap-fetch',
+         'http-methods',
+        'subdomain-scanner',
+        'port-scanner',
+         'vhost-enum',
+        'directory-scanner',
+        'directory-bruteforce',
+         'favicon-hash',
+         'error-page-analysis',
+         'cookie-analysis',
+         'source-leak-checks',
+        'tech-fingerprint',
+        'crawler',
+        'parameter-discovery',
+        'waf-detection',
+        'ssl-scanner',
+         'api-discovery',
+         'api-fuzzer',
+         'jwt-analyzer'
+      ],
       objective: 'Map the attack surface comprehensively',
       nextPhaseCondition: (findings: any[]) => {
         // Proceed if we found any relevant information
@@ -85,12 +120,13 @@ export class ProgressiveDiscovery extends EventEmitter {
           f.type === 'port'
         );
       },
-      maxDuration: 900000 // 15 minutes
+      maxDuration: Number.POSITIVE_INFINITY // no time limit for recon
     },
     analyze: {
       name: 'analyze',
       displayName: 'Vulnerability Analysis',
-      tools: ['header-analyzer', 'ssl-checker', 'api-discovery', 'form-finder', 'js-analyzer', 'config-checker'],
+      // Include JWT and API tools during analysis so AI suggestions are valid
+      tools: ['vulnerability-scanner', 'tech-fingerprint', 'crawler', 'jwt-analyzer', 'api-discovery', 'api-fuzzer'],
       objective: 'Identify potential vulnerabilities in discovered assets',
       nextPhaseCondition: (findings: any[]) => {
         // Proceed if we found vulnerabilities worth exploiting
@@ -100,16 +136,16 @@ export class ProgressiveDiscovery extends EventEmitter {
           (f.severity === 'medium' && f.confidence > 0.7)
         );
       },
-      maxDuration: 1800000 // 30 minutes
+      maxDuration: Number.POSITIVE_INFINITY // no time limit for analysis
     },
     exploit: {
       name: 'exploit',
       displayName: 'Safe Exploitation',
-      tools: ['sql-injection', 'xss-scanner', 'jwt-analyzer', 'auth-bypass', 'api-fuzzer', 'controlled-exploit'],
+      tools: ['controlled-exploit', 'data-extractor', 'privilege-escalator'],
       objective: 'Safely confirm and demonstrate vulnerability impact',
       nextPhaseCondition: () => false, // No next phase after exploit
       requiresApproval: true,
-      maxDuration: 2700000 // 45 minutes
+      maxDuration: Number.POSITIVE_INFINITY // no time limit for exploit
     }
   };
 
@@ -117,6 +153,25 @@ export class ProgressiveDiscovery extends EventEmitter {
   private currentPhase: Phase | null = null;
   private phaseHistory: Map<string, PhaseResult[]> = new Map();
   private toolExecutor: any; // Will be injected
+  
+  private async runWithFallback(job: { tool: string; parameters: Record<string, any>; workflowId: string }): Promise<any> {
+    const { getFallbackChain } = await import('../execution/fallbacks.js');
+    try {
+      return await this.toolExecutor.execute(job);
+    } catch (e) {
+      try { (this as any).metrics?.inc('fallback_invocations'); } catch {}
+      const chain = getFallbackChain(job.tool);
+      for (const alt of chain) {
+        try {
+          this.emit('fallback:invoke', { workflowId: job.workflowId, from: job.tool, to: alt });
+          return await this.toolExecutor.execute({ ...job, tool: alt });
+        } catch {}
+        try { (this as any).metrics?.inc('fallback_invocations'); } catch {}
+      }
+      // Always allow pipeline to continue; return a synthetic failed result shape
+      return { output: '', findings: [], error: e instanceof Error ? e.message : String(e), status: 'failed' };
+    }
+  }
 
   constructor(aiService: StrategicAIService) {
     super();
@@ -200,6 +255,19 @@ export class ProgressiveDiscovery extends EventEmitter {
     const phaseTimeout = phase.maxDuration || 3600000; // Default 1 hour
     const deadline = Date.now() + phaseTimeout;
 
+    // Coverage guard: compute expected and expand plan before execution
+    const inv = await this.inventoryTargets(context.workflowId);
+    try { (this as any).metrics?.setAssets(inv.subs.length, inv.forms.length, inv.apis.length); } catch {}
+    const PER_SUB = 4; // dir brute + port scan + tech + crawl
+    const PER_FORM = 1; // sqli test placeholder
+    const PER_API = 1; // api-fuzzer placeholder
+    const expected = inv.subs.length * PER_SUB + inv.forms.length * PER_FORM + inv.apis.length * PER_API;
+    strategy.recommendations = this.expandUntil(strategy.recommendations, inv, expected);
+    try { (this as any).metrics?.setPlanned(strategy.recommendations.length); } catch {}
+    if (strategy.recommendations.length < expected) {
+      throw new Error(`coverage-guard: ${strategy.recommendations.length} < ${expected}`);
+    }
+
     for (const recommendation of strategy.recommendations) {
       // Check timeout
       if (Date.now() > deadline) {
@@ -221,6 +289,14 @@ export class ProgressiveDiscovery extends EventEmitter {
           availableTools: phase.tools
         });
         continue;
+      }
+
+      // Filter orchestrator/meta params before execution
+      const metaKeys = new Set(['readOnly','aggressive','intrusiveLevel','extensions','threads','maxThreads','delayMs','requestsPerSecond','url','endpoints']);
+      if (recommendation.parameters) {
+        for (const k of Object.keys(recommendation.parameters)) {
+          if (metaKeys.has(k)) delete (recommendation.parameters as any)[k];
+        }
       }
 
       // Execute the test
@@ -255,18 +331,32 @@ export class ProgressiveDiscovery extends EventEmitter {
             testResult.findings
           );
           
-          // Add new recommendations to queue if they're high priority
-          const highPriorityTests = adaptedStrategy.recommendations.filter(
-            r => r.priority === 'critical' || r.priority === 'high'
-          );
+          // Add new recommendations to queue
+          // For subdomain discoveries, we want to test ALL of them exhaustively
+          const isSubdomainDiscovery = testResult.findings.some(f => f.type === 'subdomain');
+          const newTests = isSubdomainDiscovery 
+            ? adaptedStrategy.recommendations // Include all tests for subdomain expansion
+            : adaptedStrategy.recommendations.filter(
+                r => r.priority === 'critical' || r.priority === 'high'
+              );
           
-          if (highPriorityTests.length > 0) {
+          if (newTests.length > 0) {
             logger.info('AI adapted strategy with new tests', {
               workflowId: context.workflowId,
-              newTests: highPriorityTests.map(t => t.tool),
+              newTests: newTests.map(t => ({ tool: t.tool, target: t.parameters?.target })),
+              isSubdomainExpansion: isSubdomainDiscovery,
+              totalNewTests: newTests.length,
               reason: adaptedStrategy.reasoning.substring(0, 100) + '...'
             });
-            strategy.recommendations.push(...highPriorityTests);
+            
+            // Filter out duplicates
+            const existingIds = new Set([
+              ...results.map(r => r.id),
+              ...strategy.recommendations.map(r => r.id)
+            ]);
+            const uniqueNewTests = newTests.filter(t => !existingIds.has(t.id));
+            
+            strategy.recommendations.push(...uniqueNewTests);
           }
         } catch (error) {
           logger.error('Failed to adapt strategy', { error, workflowId: context.workflowId });
@@ -314,7 +404,53 @@ export class ProgressiveDiscovery extends EventEmitter {
       duration: `${Math.round(phaseDuration / 1000)}s`
     });
 
+    try { (this as any).metrics?.finalizeAndWrite(process.env.METRICS_OUT || '/out/run-metrics.json'); } catch {}
     return phaseResult;
+  }
+
+  private async inventoryTargets(workflowId: string): Promise<{ subs: string[]; forms: any[]; apis: any[] }> {
+    // Use stored results to derive inventory
+    const history = this.getPhaseHistory(workflowId);
+    const allFindings = history.flatMap(p => p.results.flatMap(r => r.findings));
+    const subs = Array.from(new Set(allFindings.filter((f: any) => f.type === 'subdomain').map((f: any) => (f.evidence?.host || '').toString()).filter(Boolean)));
+    const forms = allFindings.filter((f: any) => f.type === 'form');
+    const apis = allFindings.filter((f: any) => f.type === 'api');
+    return { subs, forms, apis };
+  }
+
+  private expandUntil(plan: any[], inv: { subs: string[]; forms: any[]; apis: any[] }, expected: number): any[] {
+    const dedupe = (arr: any[]) => {
+      const seen = new Set<string>();
+      return arr.filter((r: any) => {
+        const key = `${r.tool}|${r.parameters?.target || ''}|${r.parameters?.wordlist || ''}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    };
+
+    const out = [...plan];
+    // Add per-sub patterns
+    for (const sub of inv.subs) {
+      const t = `https://${sub}`;
+      out.push({ id: `dir-${sub}`, tool: 'directory-bruteforce', purpose: 'Per-sub dir brute', parameters: { target: t, wordlist: '/seclists/Discovery/Web-Content/common.txt' }, priority: 'high', safetyChecks: ['rate-limiting'] });
+      out.push({ id: `port-${sub}`, tool: 'port-scanner', purpose: 'Per-sub ports', parameters: { target: sub }, priority: 'medium', safetyChecks: ['rate-limiting'] });
+      out.push({ id: `tech-${sub}`, tool: 'tech-fingerprint', purpose: 'Per-sub tech', parameters: { target: t }, priority: 'medium', safetyChecks: ['passive-scan'] });
+      out.push({ id: `crawl-${sub}`, tool: 'crawler', purpose: 'Per-sub crawl', parameters: { target: t }, priority: 'medium', safetyChecks: ['rate-limiting'] });
+      if (out.length >= expected) break;
+    }
+
+    // Add per-form and per-api placeholders if needed
+    for (const form of inv.forms) {
+      out.push({ id: `sqli-${(form.data?.path || form.description || 'form').replace(/[^a-z0-9-]/gi, '-')}`, tool: 'sql-injector', purpose: 'SQLi on form', parameters: { target: form.data?.path || form.description }, priority: 'critical', safetyChecks: ['non-destructive'] });
+      if (out.length >= expected) break;
+    }
+    for (const api of inv.apis) {
+      out.push({ id: `api-${(api.evidence?.url || api.description || 'api').replace(/[^a-z0-9-]/gi, '-')}`, tool: 'api-fuzzer', purpose: 'API fuzzing', parameters: { target: api.evidence?.url || api.description }, priority: 'high', safetyChecks: ['rate-limiting'] });
+      if (out.length >= expected) break;
+    }
+
+    return dedupe(out).slice(0, Math.max(expected, out.length));
   }
 
   async executeFullDiscovery(context: DiscoveryContext): Promise<{
@@ -437,19 +573,21 @@ export class ProgressiveDiscovery extends EventEmitter {
         params: substitutedParams
       });
 
-      // Execute the tool
-      const toolResult = await this.toolExecutor.execute({
+      // Execute with deterministic fallback chain
+      const toolResult = await this.runWithFallback({
         tool: recommendation.tool,
         parameters: substitutedParams,
-        workflowId: context.workflowId,
-        timeout: owaspKnowledgeBase.safetyThresholds.maxTestDuration
+        workflowId: context.workflowId
       });
+
+      // Persist raw artifacts to findings pool
+      await this.persistToolArtifacts(context.workflowId, recommendation.tool, substitutedParams.target, toolResult);
 
       // Parse and enrich findings
       const findings = this.parseToolFindings(toolResult, recommendation);
       
       // Get OWASP mapping
-      const toolMapping = owaspKnowledgeBase.toolMapping[recommendation.tool];
+      const toolMapping = (owaspKnowledgeBase as any).toolMapping?.[recommendation.tool] || { owaspCategories: [], ccControls: [] };
       
       const testResult: TestResult = {
         id: testId,
@@ -460,12 +598,15 @@ export class ProgressiveDiscovery extends EventEmitter {
         status: 'success',
         findings,
         rawOutput: toolResult.output,
-        owaspCategories: toolMapping?.owaspCategories || [],
-        ccMapping: toolMapping?.ccControls || []
+        owaspCategories: toolMapping.owaspCategories || [],
+        ccMapping: toolMapping.ccControls || []
       };
 
       // Store the test result for future parameter substitution
       this.storeTestResult(context.workflowId, recommendation.tool, testResult);
+
+      // Best-effort: save artifacts from findings (GET/JS bodies)
+      await this.saveFindingsArtifacts(context.workflowId, findings);
 
       return testResult;
     } catch (error) {
@@ -525,10 +666,246 @@ export class ProgressiveDiscovery extends EventEmitter {
 
     // Tool-specific parsing logic
     switch (recommendation.tool) {
+      case 'passive-dns':
+        if (toolResult.output) {
+          try {
+            const data = JSON.parse(toolResult.output);
+            const lines = Array.isArray(data) ? data : (data?.FDNS_A || data?.RDNS || []);
+            const hosts: string[] = (lines || []).map((e: any) => (Array.isArray(e) ? e[0] : e?.hostname || e)?.toString());
+            for (const host of Array.from(new Set(hosts.filter(Boolean)))) {
+              findings.push({
+                type: 'subdomain', severity: 'info', confidence: 0.7,
+                title: `PassiveDNS: ${host}`, description: 'Historical DNS record', evidence: { host }
+              });
+            }
+          } catch {}
+        }
+        break;
+      case 'search-dorking':
+        if (toolResult.output) {
+          const urls = Array.from(toolResult.output.matchAll(/href=\"(https?:[^\"]+)/gi)).map((m: any) => m[1]);
+          for (const url of Array.from(new Set(urls))) {
+            findings.push({ type: 'endpoint', severity: 'info', confidence: 0.5, title: 'Dorked URL', description: url, evidence: { url } });
+          }
+        }
+        break;
+      case 'shodan-search':
+        if (toolResult.output) {
+          try {
+            const data = JSON.parse(toolResult.output);
+            for (const m of data?.matches || []) {
+              findings.push({ type: 'service', severity: 'info', confidence: 0.7, title: `Shodan: ${m.ip_str}:${m.port}`, description: m.product || 'service', evidence: m });
+            }
+          } catch {}
+        }
+        break;
+      case 'wayback-urls':
+        if (toolResult.output) {
+          try {
+            const rows = JSON.parse(toolResult.output) as any[];
+            const urls = rows.slice(1).map(r => r[0]).filter(Boolean);
+            for (const u of urls) {
+              findings.push({ type: 'endpoint', severity: 'info', confidence: 0.6, title: 'Wayback URL', description: u, evidence: { url: u } });
+            }
+          } catch {}
+        }
+        break;
+      case 'company-registry':
+        if (toolResult.output) {
+          findings.push({ type: 'business-intel', severity: 'info', confidence: 0.5, title: 'Company registry data', description: 'OpenCorporates search results', evidence: toolResult.output.substring(0, 500) });
+        }
+        break;
+      case 'paste-search':
+        if (toolResult.output) {
+          try {
+            const data = JSON.parse(toolResult.output);
+            for (const p of data?.data || []) {
+              findings.push({ type: 'leak', severity: 'medium', confidence: 0.6, title: `Paste reference: ${p.id}`, description: p.full_url || p.id, evidence: p });
+            }
+          } catch {}
+        }
+        break;
+      case 'news-osint':
+        if (toolResult.output) {
+          try {
+            const data = JSON.parse(toolResult.output);
+            for (const art of data?.articles || []) {
+              findings.push({ type: 'news', severity: 'info', confidence: 0.5, title: art.title || 'News', description: art.url || '', evidence: art });
+            }
+          } catch {}
+        }
+        break;
+      case 'zone-transfer':
+        if (toolResult.output && /\sAXFR\s/.test(toolResult.output) || /IN\s+A\s+/.test(toolResult.output)) {
+          const lines = toolResult.output.split('\n').filter((l: string) => l.includes('IN'));
+          for (const l of lines) {
+            findings.push({ type: 'dns-record', severity: 'high', confidence: 0.9, title: 'Zone data', description: l });
+          }
+        }
+        break;
+      case 'http-methods':
+        if (toolResult.output) {
+          const allow = toolResult.output.match(/Allow:\s*([^\r\n]+)/i)?.[1];
+          if (allow) findings.push({ type: 'http-methods', severity: 'info', confidence: 0.8, title: `Allowed methods: ${allow}`, description: allow });
+        }
+        break;
+      case 'vhost-enum':
+        if (toolResult.output) {
+          const lines = toolResult.output.split('\n').filter((l: string) => l.includes('Found:'));
+          for (const l of lines) {
+            const host = l.split('Found:')[1]?.trim();
+            if (host) findings.push({ type: 'vhost', severity: 'info', confidence: 0.7, title: `VHost: ${host}`, description: host });
+          }
+        }
+        break;
+      case 'favicon-hash':
+        if (toolResult.output) {
+          findings.push({ type: 'fingerprint', severity: 'info', confidence: 0.6, title: 'Favicon hash', description: toolResult.output.trim() });
+        }
+        break;
+      case 'error-page-analysis':
+        if (toolResult.output) {
+          findings.push({ type: 'error-page', severity: 'info', confidence: 0.6, title: 'Error page content', description: toolResult.output.substring(0, 200) });
+        }
+        break;
+      case 'cookie-analysis':
+        if (toolResult.output) {
+          const cookies = toolResult.output.split('\n').filter((l: string) => /set-cookie/i.test(l));
+          for (const c of cookies) {
+            findings.push({ type: 'cookie', severity: 'info', confidence: 0.8, title: 'Set-Cookie', description: c });
+          }
+        }
+        break;
+      case 'source-leak-checks':
+        if (toolResult.output) {
+          const lines = toolResult.output.split('\n').filter(Boolean);
+          for (const l of lines) {
+            if (/^200\s/.test(l)) findings.push({ type: 'source-leak', severity: 'high', confidence: 0.9, title: 'Source control exposed', description: l });
+          }
+        }
+        break;
+      case 'whois':
+        if (toolResult.output) {
+          const lines: string[] = toolResult.output.split('\n').filter((ln: string) => ln.trim());
+          const org = lines.find((ln: string) => /OrgName|Registrant Organization|Organization/i.test(ln));
+          findings.push({
+            type: 'whois',
+            severity: 'info',
+            confidence: 0.8,
+            title: 'WHOIS information collected',
+            description: org ? org : 'WHOIS data fetched',
+            evidence: { sample: lines.slice(0, 20).join('\n') }
+          });
+        }
+        break;
+      case 'crtsh-lookup':
+        if (toolResult.output) {
+          try {
+            const data = JSON.parse(toolResult.output);
+            const hosts = Array.isArray(data) ? data.flatMap((d: any) => String(d.name_value || '').split('\n')) : [];
+            const uniqueHosts = Array.from(new Set(hosts.filter(Boolean)));
+            for (const host of uniqueHosts) {
+              findings.push({
+                type: 'subdomain',
+                severity: 'info',
+                confidence: 0.9,
+                title: `CT log subdomain: ${host}`,
+                description: `Discovered via crt.sh: ${host}`,
+                evidence: { host }
+              });
+            }
+          } catch {
+            findings.push({
+              type: 'ct-log',
+              severity: 'info',
+              confidence: 0.5,
+              title: 'Certificate transparency output collected',
+              description: 'Non-JSON crt.sh response',
+              evidence: { output: toolResult.output.substring(0, 1000) }
+            });
+          }
+        }
+        break;
+      case 'bgpview-asn':
+        if (toolResult.output) {
+          try {
+            const data = JSON.parse(toolResult.output);
+            const asns = data?.data?.asns || [];
+            for (const asn of asns) {
+              findings.push({
+                type: 'asn',
+                severity: 'info',
+                confidence: 0.7,
+                title: `ASN discovered: AS${asn.asn}`,
+                description: `${asn.name} (${asn.country_code})`,
+                evidence: { asn: asn.asn, name: asn.name }
+              });
+            }
+          } catch {
+            findings.push({
+              type: 'asn',
+              severity: 'info',
+              confidence: 0.5,
+              title: 'ASN lookup output collected',
+              description: 'Non-JSON ASN response',
+              evidence: { output: toolResult.output.substring(0, 500) }
+            });
+          }
+        }
+        break;
+      case 'dig-any':
+        if (toolResult.output) {
+          const records = toolResult.output.split('\n').filter((l: string) => l.trim());
+          for (const rec of records) {
+            findings.push({
+              type: 'dns-record',
+              severity: 'info',
+              confidence: 0.9,
+              title: `DNS: ${rec}`,
+              description: 'DNS ANY record',
+              evidence: { record: rec }
+            });
+          }
+        }
+        break;
+      case 'robots-fetch':
+        if (toolResult.output) {
+          const lines: string[] = toolResult.output.split('\n').filter((ln: string) => ln.trim());
+          for (const line of lines) {
+            const match = line.match(/^(Disallow|Allow):\s*(.+)$/i) as RegExpMatchArray | null;
+            if (match) {
+              findings.push({
+                type: 'endpoint',
+                severity: 'info',
+                confidence: 0.8,
+                title: `robots.txt ${match[1]} ${match[2]}`,
+                description: `robots.txt directive: ${match[1]} ${match[2]}`,
+                evidence: { directive: match[1], path: match[2] }
+              });
+            }
+          }
+        }
+        break;
+      case 'sitemap-fetch':
+        if (toolResult.output) {
+          const matches: RegExpMatchArray[] = Array.from(toolResult.output.matchAll(/<loc>([^<]+)<\/loc>/gi)) as RegExpMatchArray[];
+          const urls: string[] = matches.map((mm: RegExpMatchArray) => mm[1]);
+          for (const url of urls) {
+            findings.push({
+              type: 'endpoint',
+              severity: 'info',
+              confidence: 0.9,
+              title: `Sitemap URL: ${url}`,
+              description: 'URL discovered via sitemap.xml',
+              evidence: { url }
+            });
+          }
+        }
+        break;
       case 'subdomain-scanner':
         // Parse subdomains from output
         if (toolResult.output) {
-          const domains = toolResult.output
+          const domains: string[] = toolResult.output
             .split('\n')
             .filter((line: string) => line.trim() && !line.startsWith('[') && !line.includes('error'));
             
@@ -539,8 +916,7 @@ export class ProgressiveDiscovery extends EventEmitter {
               confidence: 1.0,
               title: `Subdomain discovered: ${domain}`,
               description: `Found subdomain ${domain} for the target domain`,
-              target: domain,
-              data: { domain }
+              evidence: { domain }
             });
           }
         }
@@ -560,7 +936,7 @@ export class ProgressiveDiscovery extends EventEmitter {
                 confidence: 1.0,
                 title: `Open port: ${port}`,
                 description: `Port ${port} is open`,
-                data: { port: parseInt(port) }
+                evidence: { port: parseInt(port) }
               });
             }
           }
@@ -571,7 +947,7 @@ export class ProgressiveDiscovery extends EventEmitter {
         // Parse technology detections from httpx output
         if (toolResult.output) {
           try {
-            const lines = toolResult.output.split('\n').filter((l: string) => l.trim());
+            const lines: string[] = toolResult.output.split('\n').filter((l: string) => l.trim());
             for (const line of lines) {
               try {
                 const data = JSON.parse(line);
@@ -582,8 +958,7 @@ export class ProgressiveDiscovery extends EventEmitter {
                     confidence: 0.9,
                     title: `Technologies detected: ${data.tech.join(', ')}`,
                     description: `Detected technologies on ${data.url}: ${data.tech.join(', ')}`,
-                    target: data.url,
-                    data: { technologies: data.tech, url: data.url }
+                    evidence: { technologies: data.tech, url: data.url }
                   });
                 }
               } catch (e) {
@@ -592,6 +967,135 @@ export class ProgressiveDiscovery extends EventEmitter {
             }
           } catch (e) {
             logger.debug('Failed to parse tech-fingerprint output', { error: e });
+          }
+        }
+        break;
+      case 'crawler':
+      case 'directory-scanner':
+        if (toolResult.output) {
+          const lines = toolResult.output.split('\n').filter((l: string) => l.trim());
+          for (const line of lines) {
+            try {
+              const data = JSON.parse(line);
+              const url = data.url || data.request?.url || data?.Result || data?.host;
+              if (url) {
+                findings.push({
+                  type: 'endpoint',
+                  severity: 'info',
+                  confidence: 0.8,
+                  title: `Discovered URL: ${url}`,
+                  description: 'Discovered via crawler/katana',
+                  evidence: { url }
+                });
+              }
+            } catch {
+              // ignore non-JSON lines
+            }
+          }
+        }
+        break;
+      case 'directory-bruteforce':
+        if (toolResult.output) {
+          try {
+            const data = JSON.parse(toolResult.output);
+            const results = data?.results || [];
+            for (const r of results) {
+              findings.push({
+                type: 'endpoint',
+                severity: 'info',
+                confidence: 0.9,
+                title: `Bruteforced path: ${r.url || r.input || r.result}`,
+                description: `ffuf found ${r.url || r.input}`,
+                evidence: r
+              });
+            }
+          } catch {
+            // Try JSONL
+            const lines = toolResult.output.split('\n').filter((l: string) => l.trim());
+            for (const line of lines) {
+              try {
+                const r = JSON.parse(line);
+                const url = r.url || r.input || r.result;
+                if (url) {
+                  findings.push({
+                    type: 'endpoint',
+                    severity: 'info',
+                    confidence: 0.8,
+                    title: `Bruteforced path: ${url}`,
+                    description: 'ffuf discovered path',
+                    evidence: r
+                  });
+                }
+              } catch { /* noop */ }
+            }
+          }
+        }
+        break;
+      case 'parameter-discovery':
+        if (toolResult.output) {
+          try {
+            const data = JSON.parse(toolResult.output);
+            const params = data?.[0]?.parameters || data?.parameters || [];
+            for (const p of params) {
+              findings.push({
+                type: 'parameter',
+                severity: 'info',
+                confidence: 0.8,
+                title: `Hidden parameter: ${p}`,
+                description: 'Discovered via arjun',
+                evidence: { parameter: p }
+              });
+            }
+          } catch {
+            findings.push({
+              type: 'parameter',
+              severity: 'info',
+              confidence: 0.5,
+              title: 'Parameter discovery output collected',
+              description: 'Could not parse JSON; storing raw',
+              evidence: { output: toolResult.output.substring(0, 1000) }
+            });
+          }
+        }
+        break;
+      case 'waf-detection':
+        if (toolResult.output) {
+          findings.push({
+            type: 'waf',
+            severity: 'info',
+            confidence: 0.7,
+            title: 'WAF detection results',
+            description: 'wafw00f output collected',
+            evidence: { output: toolResult.output.substring(0, 1000) }
+          });
+        }
+        break;
+      case 'ssl-scanner':
+        if (toolResult.output) {
+          const weak = /vuln|weak|insecure/i.test(toolResult.output) ? 'SSL/TLS issues detected' : 'SSL/TLS report collected';
+          findings.push({
+            type: 'ssl',
+            severity: 'info',
+            confidence: 0.7,
+            title: weak,
+            description: 'testssl.sh output',
+            evidence: { output: toolResult.output.substring(0, 1500) }
+          });
+        }
+        break;
+      case 'api-discovery':
+      case 'api-fuzzer':
+        if (toolResult.output) {
+          const lines = toolResult.output.split('\n').filter((l: string) => /^https?:\/\//.test(l.trim()));
+          for (const url of lines) {
+            findings.push({
+              type: 'api',
+              severity: 'info',
+              confidence: 0.8,
+              title: `API endpoint: ${url}`,
+              description: 'Discovered via kiterunner',
+              evidence: { url }
+            });
           }
         }
         break;
@@ -623,6 +1127,65 @@ export class ProgressiveDiscovery extends EventEmitter {
     });
 
     return findings;
+  }
+
+  private async ensureFindingsDir(workflowId: string): Promise<string> {
+    const baseDir = path.resolve(process.cwd(), '..', 'logs', 'workflows', workflowId, 'findings-pool');
+    await fs.mkdir(baseDir, { recursive: true });
+    return baseDir;
+  }
+
+  private sanitizeFileName(input: string): string {
+    return input
+      .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
+      .replace(/[^a-zA-Z0-9._-]+/g, '_')
+      .slice(0, 200) || 'target';
+  }
+
+  private async persistToolArtifacts(
+    workflowId: string,
+    tool: string,
+    target: any,
+    toolResult: any
+  ): Promise<void> {
+    try {
+      const dir = await this.ensureFindingsDir(workflowId);
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      const tgt = Array.isArray(target) ? 'multi' : (typeof target === 'string' ? this.sanitizeFileName(target) : 'unknown');
+      const base = path.join(dir, `${ts}__${tool}__${tgt}`);
+      if (toolResult?.output) {
+        await fs.writeFile(`${base}.out`, toolResult.output, 'utf8');
+      }
+      await fs.writeFile(`${base}.meta.json`, JSON.stringify({ tool, target, ts, metadata: toolResult?.metadata || {} }, null, 2), 'utf8');
+    } catch {
+      // best-effort; do not block
+    }
+  }
+
+  private async saveFindingsArtifacts(workflowId: string, findings: Finding[]): Promise<void> {
+    const endpoints = findings
+      .map(f => (f as any).evidence?.url || (f as any).description)
+      .filter((u: any) => typeof u === 'string' && /^https?:\/\//i.test(u)) as string[];
+    if (endpoints.length === 0) return;
+    const dir = await this.ensureFindingsDir(workflowId);
+    const httpDir = path.join(dir, 'http');
+    const jsDir = path.join(dir, 'js');
+    await fs.mkdir(httpDir, { recursive: true });
+    await fs.mkdir(jsDir, { recursive: true });
+    const limit = 30; // cap pulls per batch to avoid overload
+    for (const url of endpoints.slice(0, limit)) {
+      try {
+        const isJs = /\.js(\?|$)/i.test(url);
+        const resp = await axios.get(url, { timeout: 15000, validateStatus: () => true });
+        const safe = this.sanitizeFileName(url.replace(/^https?:\/\//, '').replace(/\//g, '__'));
+        const basePath = path.join(isJs ? jsDir : httpDir, safe);
+        await fs.writeFile(`${basePath}.headers.json`, JSON.stringify(resp.headers, null, 2), 'utf8');
+        const body = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
+        await fs.writeFile(`${basePath}.body`, body, 'utf8');
+      } catch {
+        // best-effort
+      }
+    }
   }
 
   private normalizeSeverity(severity: any): Finding['severity'] {
@@ -823,21 +1386,27 @@ export class ProgressiveDiscovery extends EventEmitter {
             if (property === 'results') {
               // For subdomain scanner, extract domains from raw output
               if (toolName === 'subdomain-scanner' && testResult.rawOutput) {
+                const controlCharRegex = /[\u0000-\u001F\u007F-\u009F]/g;
+                const domainRegex = /^[a-z0-9.-]+$/i;
                 const domains = testResult.rawOutput
                   .split('\n')
-                  .filter(line => line.trim())
-                  .map(line => line.trim());
-                  
+                  .map(line => line.replace(controlCharRegex, '').trim().toLowerCase())
+                  .filter(line => line && domainRegex.test(line));
+
                 substituted[key] = domains;
                 logger.info('Substituted domains', {
                   workflowId,
                   key,
                   count: domains.length,
-                  domains: domains.slice(0, 5) // Log first 5 for debugging
+                  domains: domains.slice(0, 5)
                 });
               } else {
-                // For other tools, use findings
-                substituted[key] = testResult.findings.map(f => f.target || f.data);
+                // For other tools, use findings to derive host-like values safely
+                const derived = (testResult.findings || [])
+                  .map(f => ((f as any).target || (f as any).data?.domain || (f as any).evidence?.host || '').toString())
+                  .map(h => h.replace(/[\u0000-\u001F\u007F-\u009F]/g, '').trim().toLowerCase())
+                  .filter(h => h && /^[a-z0-9.-]+$/i.test(h));
+                substituted[key] = derived;
               }
             } else if (property === 'output') {
               substituted[key] = testResult.rawOutput;

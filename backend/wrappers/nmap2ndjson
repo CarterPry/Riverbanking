@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+target="$1"; shift || true
+
+# Use Python xmltodict (installed in the image venv) to avoid yq/xq compatibility issues
+# Run nmap and pipe XML to Python; export target to the Python process environment
+nmap -sV -Pn --top-ports 1000 -T4 -oX - "$target" | TARGET="$target" python3 - <<'PY'
+import sys, json, os
+import xmltodict
+
+target = os.environ.get('TARGET')
+xml_data = sys.stdin.read()
+
+try:
+    data = xmltodict.parse(xml_data, attr_prefix='@', cdata_key='#text')
+    nmaprun = data.get('nmaprun', {})
+    hosts = nmaprun.get('host', [])
+    if isinstance(hosts, dict):
+        hosts = [hosts]
+    host = hosts[0] if hosts else {}
+
+    address = host.get('address', {})
+    if isinstance(address, list):
+        addr_value = address[0].get('@addr') if address else None
+    else:
+        addr_value = address.get('@addr') if isinstance(address, dict) else None
+
+    ports = host.get('ports', {})
+    port_list = ports.get('port', []) if isinstance(ports, dict) else []
+    if isinstance(port_list, dict):
+        port_list = [port_list]
+
+    # Emit a single NDJSON object, mirroring previous shape
+    out = {
+        'tool': 'nmap',
+        'target': target,
+        'address': addr_value,
+        'ports': port_list,
+    }
+    print(json.dumps(out, separators=(',', ':'), ensure_ascii=False))
+except Exception as e:
+    # Best-effort error record to keep pipeline flowing
+    err = {'tool': 'nmap', 'target': target, 'error': str(e)}
+    print(json.dumps(err, separators=(',', ':'), ensure_ascii=False))
+PY
+

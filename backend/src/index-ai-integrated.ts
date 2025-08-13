@@ -83,7 +83,7 @@ async function initializeAISystem() {
         // Execute workflow
         const result = await orchestrator.executeWorkflow({
           target,
-          userIntent,
+          userIntent: userIntent || 'Full recon/OSINT and exhaustive testing across subdomains/dirs; test SQLi/JWT/leaky APIs everywhere.',
           constraints
         });
         
@@ -163,6 +163,23 @@ async function initializeAISystem() {
     
     // Legacy routes (kept for backward compatibility)
     app.use('/api/workflows', workflowRoutes);
+
+    // Convenience endpoint for quick recon kick-off (domain-only)
+    app.post('/api/v2/recon', async (req, res) => {
+      try {
+        const domain = (req.body?.domain || req.body?.target || 'sweetspotgov.com').toString();
+        const target = domain.startsWith('http') ? domain : `https://${domain}`;
+        const result = await orchestrator.executeWorkflow({
+          target,
+          userIntent: 'Full recon/OSINT and exhaustive testing across all subdomains and directories. Include SQLi, JWT checks, and leaky API discovery.',
+          constraints: { minTestsPerPhase: 12 }
+        });
+        res.json({ success: true, result });
+      } catch (error) {
+        logger.error('Quick recon endpoint failed', { error });
+        res.status(500).json({ error: 'Recon start failed' });
+      }
+    });
     
     logger.info('AI-integrated system initialized successfully');
     

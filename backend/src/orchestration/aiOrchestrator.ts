@@ -9,6 +9,7 @@ import { AIDecisionLogger } from '../audit/aiDecisionLogger.js';
 import { HITLApprovalSystem } from '../approval/hitlApprovalSystem.js';
 import { EnhancedWebSocketManager } from '../websocket/enhancedWebSocketManager.js';
 import { createLogger } from '../utils/logger.js';
+import { RunMetrics } from '../telemetry/runMetrics.js';
 
 const logger = createLogger('AIOrchestrator');
 
@@ -53,6 +54,7 @@ export class AIOrchestrator extends EventEmitter {
   private executionEngine: TestExecutionEngine;
   private decisionLogger: AIDecisionLogger;
   private approvalSystem: HITLApprovalSystem;
+  private metrics: RunMetrics = new RunMetrics();
   private websocketManager?: EnhancedWebSocketManager;
   private activeWorkflows: Map<string, any> = new Map();
 
@@ -225,12 +227,15 @@ export class AIOrchestrator extends EventEmitter {
         }
       });
 
-      // Execute progressive discovery
+      // Execute progressive discovery (full recon/analyze/exploit flow)
       const discoveryContext = {
         workflowId,
         target: request.target,
         userIntent: request.userIntent,
-        constraints: request.constraints,
+        constraints: {
+          minTestsPerPhase: 10,
+          ...request.constraints
+        },
         auth: request.auth
       };
 
@@ -252,16 +257,16 @@ export class AIOrchestrator extends EventEmitter {
       // Calculate CC controls covered
       const ccControlsCovered = this.extractCCControls(discoveryResult.totalFindings);
 
-      // Final status update
+    // Final status update
       const endTime = new Date();
       const duration = endTime.getTime() - startTime.getTime();
       
       this.broadcastUpdate('status', workflowId, {
         overall: 'completed',
         phase: 'done',
-        testsCompleted: discoveryResult.phases.reduce((sum, p) => sum + p.results.length, 0),
-        testsTotal: discoveryResult.phases.reduce((sum, p) => sum + p.results.length, 0),
-        findings: discoveryResult.totalFindings.length,
+        testsCompleted: discoveryResult.phases.reduce((sum: number, p: any) => sum + p.results.length, 0),
+        testsTotal: discoveryResult.phases.reduce((sum: number, p: any) => sum + p.results.length, 0),
+        findings: discoveryResult.totalFindings.filter((f: any) => !!f).length,
         elapsed: duration
       });
 
@@ -273,7 +278,7 @@ export class AIOrchestrator extends EventEmitter {
         duration,
         phases: discoveryResult.phases,
         totalFindings: discoveryResult.totalFindings,
-        criticalFindings: discoveryResult.totalFindings.filter(f => f.severity === 'critical'),
+        criticalFindings: discoveryResult.totalFindings.filter((f: any) => f.severity === 'critical'),
         executiveSummary,
         owaspCoverage: discoveryResult.owaspCoverage,
         ccControlsCovered,
@@ -317,6 +322,10 @@ export class AIOrchestrator extends EventEmitter {
       };
 
     } finally {
+      // Best-effort: finalize metrics artifact
+      try {
+        (this as any).metrics?.finalizeAndWrite(process.env.METRICS_OUT || '/out/run-metrics.json');
+      } catch {}
       this.activeWorkflows.delete(workflowId);
     }
   }
@@ -404,9 +413,10 @@ export class AIOrchestrator extends EventEmitter {
         status: 'sendStatusUpdate'
       };
 
-      const method = updateMap[updateType];
-      if (method && this.websocketManager[method]) {
-        this.websocketManager[method](workflowId, data);
+      const method = (updateMap as Record<string, keyof EnhancedWebSocketManager | undefined>)[String(updateType)];
+      const ws: any = this.websocketManager as any;
+      if (method && typeof ws[method] === 'function') {
+        ws[method](workflowId, data);
       }
     }
 

@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+TARGET="$1"; shift || true
+mkdir -p /out/testssl
+
+# Run testssl with JSON output; disable noisy color/openssl binary checks
+testssl.sh --quiet --jsonfile-pretty /out/testssl/report.json "$TARGET" >/dev/null 2>&1 || true
+
+# Some versions emit a single JSON object, others an array
+if jq -e type /out/testssl/report.json >/dev/null 2>&1; then
+  jtype=$(jq -r 'type' /out/testssl/report.json)
+  if [ "$jtype" = "array" ]; then
+    jq -c --arg t "$TARGET" '.[] | {tool:"testssl", target:$t, finding:.}' /out/testssl/report.json
+  else
+    jq -c --arg t "$TARGET" '{tool:"testssl", target:$t, finding:.}' /out/testssl/report.json
+  fi
+else
+  # Fallback: emit a minimal error record
+  echo "{\"tool\":\"testssl\",\"target\":\"$TARGET\",\"error\":\"no JSON produced\"}"
+fi
+
